@@ -28,13 +28,6 @@ double G = 6.67430e-11;
 struct Ray;
 bool Gravity = false;
 
-// Profiling VARS
-double timeGravity = 0.0;
-double timeGridGen = 0.0;
-double timeGridDraw = 0.0;
-double timeCompute = 0.0;
-double timeQuadDraw = 0.0;
-
 struct Camera {
     // Center the camera orbit on the black hole at (0, 0, 0)
     vec3 target = vec3(0.0f, 0.0f, 0.0f); // Always look at the black hole center
@@ -146,12 +139,12 @@ struct ObjectData {
     vec4 posRadius; // xyz = position, w = radius
     vec4 color;     // rgb = color, a = unused
     float  mass;
-    dvec3 velocity = dvec3(0.0, 0.0, 0.0); // Initial velocity
+    vec3 velocity = vec3(0.0f, 0.0f, 0.0f); // Initial velocity
 };
 vector<ObjectData> objects = {
-    { vec4(4e11f, 0.0f, 0.0f, 4e10f)   , vec4(1,1,0,1), 1.98892e30, dvec3(0.0, 0.0, 0.0) },
-    { vec4(0.0f, 0.0f, 4e11f, 4e10f)   , vec4(1,0,0,1), 1.98892e30, dvec3(0.0, 0.0, 0.0) },
-    { vec4(0.0f, 0.0f, 0.0f, SagA.r_s) , vec4(0,0,0,1), SagA.mass,  dvec3(0.0, 0.0, 0.0) },
+    { vec4(4e11f, 0.0f, 0.0f, 4e10f)   , vec4(1,1,0,1), 1.98892e30 },
+    { vec4(0.0f, 0.0f, 4e11f, 4e10f)   , vec4(1,0,0,1), 1.98892e30 },
+    { vec4(0.0f, 0.0f, 0.0f, SagA.r_s) , vec4(0,0,0,1), SagA.mass  },
     //{ vec4(6e10f, 0.0f, 0.0f, 5e10f), vec4(0,1,0,1) }
 };
 
@@ -172,7 +165,6 @@ struct Engine {
     GLuint gridVBO = 0;
     GLuint gridEBO = 0;
     int gridIndexCount = 0;
-    bool gridIndicesGenerated = false;
 
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
@@ -239,7 +231,7 @@ struct Engine {
         const float spacing = 1e10f;  // tweak this
 
         vector<vec3> vertices;
-        vertices.reserve((gridSize + 1) * (gridSize + 1));
+        vector<GLuint> indices;
 
         for (int z = 0; z <= gridSize; ++z) {
             for (int x = 0; x <= gridSize; ++x) {
@@ -273,40 +265,35 @@ struct Engine {
             }
         }
 
+        // 🧩 Add indices for GL_LINE rendering
+        for (int z = 0; z < gridSize; ++z) {
+            for (int x = 0; x < gridSize; ++x) {
+                int i = z * (gridSize + 1) + x;
+                indices.push_back(i);
+                indices.push_back(i + 1);
+
+                indices.push_back(i);
+                indices.push_back(i + gridSize + 1);
+            }
+        }
+
+        // 🔌 Upload to GPU
         if (gridVAO == 0) glGenVertexArrays(1, &gridVAO);
+        if (gridVBO == 0) glGenBuffers(1, &gridVBO);
+        if (gridEBO == 0) glGenBuffers(1, &gridEBO);
+
         glBindVertexArray(gridVAO);
 
-        if (gridVBO == 0) {
-            glGenBuffers(1, &gridVBO);
-            glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
-            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vec3), vertices.data(), GL_DYNAMIC_DRAW);
-            glEnableVertexAttribArray(0); // location = 0
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), (void*)0);
-        } else {
-            glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(vec3), vertices.data());
-        }
+        glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vec3), vertices.data(), GL_DYNAMIC_DRAW);
 
-        if (!gridIndicesGenerated) {
-            vector<GLuint> indices;
-            // 🧩 Add indices for GL_LINE rendering
-            for (int z = 0; z < gridSize; ++z) {
-                for (int x = 0; x < gridSize; ++x) {
-                    int i = z * (gridSize + 1) + x;
-                    indices.push_back(i);
-                    indices.push_back(i + 1);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gridEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
 
-                    indices.push_back(i);
-                    indices.push_back(i + gridSize + 1);
-                }
-            }
-            gridIndexCount = indices.size();
+        glEnableVertexAttribArray(0); // location = 0
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), (void*)0);
 
-            if (gridEBO == 0) glGenBuffers(1, &gridEBO);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gridEBO);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
-            gridIndicesGenerated = true;
-        }
+        gridIndexCount = indices.size();
 
         glBindVertexArray(0);
     }
@@ -315,7 +302,6 @@ struct Engine {
         glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "viewProj"),
                         1, GL_FALSE, glm::value_ptr(viewProj));
         glBindVertexArray(gridVAO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gridEBO);
 
         glDisable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
@@ -480,16 +466,16 @@ struct Engine {
         int cw = cam.moving ? COMPUTE_WIDTH  : 200;
         int ch = cam.moving ? COMPUTE_HEIGHT : 150;
 
-        // 1) reallocate the texture if needed - THIS IS NOW DONE AT INIT
-        // glBindTexture(GL_TEXTURE_2D, texture);
-        // glTexImage2D(GL_TEXTURE_2D,
-        //             0,                // mip
-        //             GL_RGBA8,         // internal format
-        //             cw,               // width
-        //             ch,               // height
-        //             0, GL_RGBA, 
-        //             GL_UNSIGNED_BYTE, 
-        //             nullptr);
+        // 1) reallocate the texture if needed
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexImage2D(GL_TEXTURE_2D,
+                    0,                // mip
+                    GL_RGBA8,         // internal format
+                    cw,               // width
+                    ch,               // height
+                    0, GL_RGBA, 
+                    GL_UNSIGNED_BYTE, 
+                    nullptr);
 
         // 2) bind compute program & UBOs
         glUseProgram(computeProgram);
@@ -600,12 +586,11 @@ struct Engine {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glBindTexture(GL_TEXTURE_2D, texture);
-        // Pre-allocate texture to max possible size
         glTexImage2D(GL_TEXTURE_2D,
                     0,             // mip
                     GL_RGBA8,      // internal format
-                    200,           // max width
-                    150,           // max height
+                    COMPUTE_WIDTH,
+                    COMPUTE_HEIGHT,
                     0,
                     GL_RGBA,
                     GL_UNSIGNED_BYTE,
@@ -656,7 +641,8 @@ int main() {
     setupCameraCallbacks(engine.window);
     vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
-    lastPrintTime = glfwGetTime();
+    auto t0 = Clock::now();
+    lastPrintTime = chrono::duration<double>(t0.time_since_epoch()).count();
 
     double lastTime = glfwGetTime();
     int   renderW  = 800, renderH = 600, numSteps = 80000;
@@ -668,106 +654,50 @@ int main() {
         double dt    = now - lastTime;   // seconds since last frame
         lastTime     = now;
 
-        double t0, t1;
-
-        // the profiler thing check the terminal ffsk
-        framesCount++;
-        if (now - lastPrintTime >= 1.0) {
-            double fps = double(framesCount) / (now - lastPrintTime);
-            std::stringstream ss;
-            ss << "Black Hole | " << std::fixed << std::setprecision(1) << fps << " FPS";
-            glfwSetWindowTitle(engine.window, ss.str().c_str());
-            
-            cout << "\n--- Profiling (ms/frame) ---" << endl;
-            cout << "  Gravity Sim:  " << std::fixed << std::setprecision(2) << (timeGravity / framesCount) * 1000.0 << " ms" << endl;
-            cout << "  Grid Gen:     " << std::fixed << std::setprecision(2) << (timeGridGen / framesCount) * 1000.0 << " ms" << endl;
-            cout << "  Grid Draw:    " << std::fixed << std::setprecision(2) << (timeGridDraw / framesCount) * 1000.0 << " ms" << endl;
-            cout << "  Compute:      " << std::fixed << std::setprecision(2) << (timeCompute / framesCount) * 1000.0 << " ms" << endl;
-            cout << "  Quad Draw:    " << std::fixed << std::setprecision(2) << (timeQuadDraw / framesCount) * 1000.0 << " ms" << endl;
-            double total = (timeGravity + timeGridGen + timeGridDraw + timeCompute + timeQuadDraw);
-            cout << "  ----------------------------" << endl;
-            cout << "  Total CPU/sync: " << std::fixed << std::setprecision(2) << (total / framesCount) * 1000.0 << " ms" << endl;
-            // fucking reset profiling vars
-            framesCount = 0;
-            lastPrintTime = now;
-            timeGravity = 0.0;
-            timeGridGen = 0.0;
-            timeGridDraw = 0.0;
-            timeCompute = 0.0;
-            timeQuadDraw = 0.0;
-        }
-
         // Gravity
-        t0 = glfwGetTime();
-        if (Gravity) {
-            for (size_t i = 0; i < objects.size(); ++i) {
-                for (size_t j = i + 1; j < objects.size(); ++j) {
-                    auto& obj1 = objects[i];
-                    auto& obj2 = objects[j];
+        for (auto& obj : objects) {
+            for (auto& obj2 : objects) {
+                if (&obj == &obj2) continue; // skip self-interaction
+                 float dx  = obj2.posRadius.x - obj.posRadius.x;
+                 float dy = obj2.posRadius.y - obj.posRadius.y;
+                 float dz = obj2.posRadius.z - obj.posRadius.z;
+                 float distance = sqrt(dx * dx + dy * dy + dz * dz);
+                 if (distance > 0) {
+                        vector<double> direction = {dx / distance, dy / distance, dz / distance};
+                        //distance *= 1000;
+                        double Gforce = (G * obj.mass * obj2.mass) / (distance * distance);
 
-                    dvec3 pos1(obj1.posRadius.x, obj1.posRadius.y, obj1.posRadius.z);
-                    dvec3 pos2(obj2.posRadius.x, obj2.posRadius.y, obj2.posRadius.z);
+                        double acc1 = Gforce / obj.mass;
+                        std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1, direction[2] * acc1};
+                        if (Gravity) {
+                            obj.velocity.x += acc[0];
+                            obj.velocity.y += acc[1];
+                            obj.velocity.z += acc[2];
 
-                    dvec3 r = pos2 - pos1;
-                    double distSq = dot(r, r);
-
-                    if (distSq > 1e-6) { // Avoid division by zero
-                        double dist = sqrt(distSq);
-                        dvec3 forceDir = r / dist;
-                        double forceMagnitude = (G * obj1.mass * obj2.mass) / distSq;
-                        dvec3 force = forceDir * forceMagnitude;
-
-                        // Apply forces (F = ma -> a = F/m)
-                        dvec3 acc1 = force / static_cast<double>(obj1.mass);
-                        dvec3 acc2 = -force / static_cast<double>(obj2.mass); // Newton's 3rd law
-
-                        obj1.velocity += acc1 * dt;
-                        obj2.velocity += acc2 * dt;
+                            obj.posRadius.x += obj.velocity.x;
+                            obj.posRadius.y += obj.velocity.y;
+                            obj.posRadius.z += obj.velocity.z;
+                            cout << "velocity: " <<obj.velocity.x<<", " <<obj.velocity.y<<", " <<obj.velocity.z<<endl;
+                        }
                     }
-                }
-            }
-
-            // Update positions using new velocities
-            for (auto& obj : objects) {
-                obj.posRadius.x += obj.velocity.x * dt;
-                obj.posRadius.y += obj.velocity.y * dt;
-                obj.posRadius.z += obj.velocity.z * dt;
             }
         }
-        t1 = glfwGetTime();
-        timeGravity += (t1 - t0);
+
 
 
         // ---------- GRID ------------- //
         // 2) rebuild grid mesh on CPU
-        t0 = glfwGetTime();
         engine.generateGrid(objects);
-        t1 = glfwGetTime();
-        timeGridGen += (t1 - t0);
-
         // 5) overlay the bent grid
         mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
         mat4 proj = perspective(radians(60.0f), float(engine.COMPUTE_WIDTH)/engine.COMPUTE_HEIGHT, 1e9f, 1e14f);
         mat4 viewProj = proj * view;
-        t0 = glfwGetTime();
         engine.drawGrid(viewProj);
-        glFinish(); // Force sync to get accurate GPU time
-        t1 = glfwGetTime();
-        timeGridDraw += (t1 - t0);
 
         // ---------- RUN RAYTRACER ------------- //
         glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
-        t0 = glfwGetTime();
         engine.dispatchCompute(camera);
-        glFinish(); // Force sync to get accurate GPU time
-        t1 = glfwGetTime();
-        timeCompute += (t1 - t0);
-
-        t0 = glfwGetTime();
         engine.drawFullScreenQuad();
-        glFinish(); // Force sync to get accurate GPU time
-        t1 = glfwGetTime();
-        timeQuadDraw += (t1 - t0);
 
         // 6) present to screen
         glfwSwapBuffers(engine.window);

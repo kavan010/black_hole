@@ -64,7 +64,7 @@ After building the project, you can run the simulations from the `build` directo
 *   **Orbit**: Click and drag the left mouse button to orbit the camera around the black hole.
 *   **Pan**: Click and drag the right mouse button to pan the camera.
 *   **Zoom**: Use the mouse scroll wheel to zoom in and out.
-*   **Toggle Gravity**: Press the `G` key to toggle the gravitational effects on the orbiting bodies.
+*   **Toggle Gravity info**: Press the `G` key to print velocity data about gravity.
 
 ## How it Works
 
