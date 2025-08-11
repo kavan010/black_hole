@@ -1,0 +1,28 @@
+# CMake build directory
+build/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Executables
+*.out
+*.exe
+black_hole_3d
+black_hole_2d
+cpu_geodesic
+
+# Object files
+*.o
+*.obj
+*.o.d
+
+# IDE-specific files
+.vscode/
+
+# Temporary files
+*~
+*.swp
