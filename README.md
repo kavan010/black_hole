@@ -22,13 +22,34 @@ Thank you everyone for checking out the video, if you haven't it explains code i
 
 ## **Building Requirements:**
 
-1. C++ Compiler supporting C++ 17 or newer
+### Windows
 
-2. [Cmake](https://cmake.org/)
+* It is recommended that Windows users install [Microsoft Visual Studio](https://visualstudio.microsoft.com/downloads/) and choose to install the  "Desktop development with C++" as it will give you access to all necessary build requirements and allow you to follow the build instructions directly.
+
+### macOS / Linux
+
+1. C++ Compiler supporting C++17 or newer
+   - **Linux**: `g++` or `clang++` is usually available via your system package manager (`apt`, `dnf`, `pacman`, etc.)
+   - **macOS**: Install via Xcode Command Line Tools with: `xcode-select --install`
+
+2. [CMake](https://cmake.org/)
+   - **Linux**: Available through your system package manager
+   - **macOS**: Install via [Homebrew](https://brew.sh): `brew install cmake`
 
 3. [Vcpkg](https://vcpkg.io/en/)
+   - **Linux**: Not typically available via package managers — instead, **clone and bootstrap manually**:
+     ```bash
+     git clone https://github.com/microsoft/vcpkg.git
+     cd vcpkg
+     ./bootstrap-vcpkg.sh
+     ```
+   - **macOS**: You can install the `vcpkg` executable via [Homebrew](https://formulae.brew.sh/formula/vcpkg): `brew install vcpkg`
+     > ⚠️ However, this does not clone the full source tree. You **must still clone the repo and run** `./bootstrap-vcpkg.sh` to get full vcpkg functionality.
 
 4. [Git](https://git-scm.com/)
+   - **Linux**: Available via your package manager
+   - **macOS**: Pre-installed, or install via Homebrew: `brew install git`
+
 
 ## **Build Instructions:**
 
