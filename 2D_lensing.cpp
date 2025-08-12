@@ -195,14 +195,17 @@ void rk4Step(Ray& ray, double dλ, double rs) {
     geodesicRHS(ray, k1, rs);
     addState(y0, k1, dλ/2.0, temp);
     Ray r2 = ray; r2.r=temp[0]; r2.phi=temp[1]; r2.dr=temp[2]; r2.dphi=temp[3];
+    if (r2.r <= rs) { ray.r = rs; return; }
     geodesicRHS(r2, k2, rs);
 
     addState(y0, k2, dλ/2.0, temp);
     Ray r3 = ray; r3.r=temp[0]; r3.phi=temp[1]; r3.dr=temp[2]; r3.dphi=temp[3];
+    if (r3.r <= rs) { ray.r = rs; return; }
     geodesicRHS(r3, k3, rs);
 
     addState(y0, k3, dλ, temp);
     Ray r4 = ray; r4.r=temp[0]; r4.phi=temp[1]; r4.dr=temp[2]; r4.dphi=temp[3];
+    if (r4.r <= rs) { ray.r = rs; return; }
     geodesicRHS(r4, k4, rs);
 
     ray.r    += (dλ/6.0)*(k1[0] + 2*k2[0] + 2*k3[0] + k4[0]);
