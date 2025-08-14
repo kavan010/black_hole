@@ -51,6 +51,18 @@ Thank you everyone for checking out the video, if you haven't it explains code i
 8. Run the program
 	- The executables will be located in the build folder
 
+### Alternative: Debian/Ubuntu apt workaround
+
+If you don't want to use vcpkg, or you just need a quick way to install the native development packages on Debian/Ubuntu, install these packages and then run the normal CMake steps above:
+
+```bash
+sudo apt update
+sudo apt install build-essential cmake \
+	libglew-dev libglfw3-dev libglm-dev libgl1-mesa-dev
+```
+
+This provides the GLEW, GLFW, GLM and OpenGL development files so `find_package(...)` calls in `CMakeLists.txt` can locate the libraries. After installing, run the `cmake -B build -S .` and `cmake --build build` commands as shown in the Build Instructions.
+
 ## **How the code works:**
 for 2D: simple, just run 2D_lensing.cpp with the nessesary dependencies installed.
 
