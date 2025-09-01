@@ -102,7 +102,7 @@ struct Camera {
 Camera camera;
 
 struct Ray;
-void rk4Step(Ray& ray, double dλ, double rs);
+void rk4Step(Ray& ray, double d_lambda, double rs);
 
 struct Engine {
     // -- Quad & Texture render -- //
@@ -290,12 +290,12 @@ struct Ray{
         // Step 3: store conserved quantities
         L = r * r * sin(theta) * dphi;
         double f = 1.0 - SagA.r_s / r;
-        double dt_dλ = sqrt((dr*dr)/f + r*r*dtheta*dtheta + r*r*sin(theta)*sin(theta)*dphi*dphi);
-        E = f * dt_dλ;
+        double dt_d_lambda = sqrt((dr*dr)/f + r*r*dtheta*dtheta + r*r*sin(theta)*sin(theta)*dphi*dphi);
+        E = f * dt_d_lambda;
     }
-    void step(double dλ, double rs) {
+    void step(double d_lambda, double rs) {
         if (r <= rs) return;
-        rk4Step(*this, dλ, rs);
+        rk4Step(*this, d_lambda, rs);
         // convert back to cartesian
         this->x = r * sin(theta) * cos(phi);
         this->y = r * sin(theta) * sin(phi);
@@ -328,7 +328,7 @@ void raytrace(vector<unsigned char>& pixels, int W, int H) {
             const double D_LAMBDA = 1e7;
             const double ESCAPE_R = 1e14;
 
-            // 2) march the ray forward in λ
+            // 2) march the ray forward in _lambda
             vec3 color(0.0f);
             if (!useGeodesics) {
                 double b = 2.0 * dot(camera.pos, dir);
@@ -399,35 +399,35 @@ void addState(const double a[6], const double b[6], double factor, double out[6]
     for (int i = 0; i < 6; i++)
         out[i] = a[i] + b[i] * factor;
 }
-void rk4Step(Ray& ray, double dλ, double rs) {
+void rk4Step(Ray& ray, double d_lambda, double rs) {
     double y0[6] = { ray.r, ray.theta, ray.phi, ray.dr, ray.dtheta, ray.dphi };
     double k1[6], k2[6], k3[6], k4[6], temp[6];
 
     geodesicRHS(ray, k1, rs);
-    addState(y0, k1, dλ/2.0, temp);
+    addState(y0, k1, d_lambda/2.0, temp);
     Ray r2 = ray;
     r2.r = temp[0]; r2.theta = temp[1]; r2.phi = temp[2];
     r2.dr = temp[3]; r2.dtheta = temp[4]; r2.dphi = temp[5];
     geodesicRHS(r2, k2, rs);
 
-    addState(y0, k2, dλ/2.0, temp);
+    addState(y0, k2, d_lambda/2.0, temp);
     Ray r3 = ray;
     r3.r = temp[0]; r3.theta = temp[1]; r3.phi = temp[2];
     r3.dr = temp[3]; r3.dtheta = temp[4]; r3.dphi = temp[5];
     geodesicRHS(r3, k3, rs);
 
-    addState(y0, k3, dλ, temp);
+    addState(y0, k3, d_lambda, temp);
     Ray r4 = ray;
     r4.r = temp[0]; r4.theta = temp[1]; r4.phi = temp[2];
     r4.dr = temp[3]; r4.dtheta = temp[4]; r4.dphi = temp[5];
     geodesicRHS(r4, k4, rs);
 
-    ray.r      += (dλ/6.0)*(k1[0] + 2*k2[0] + 2*k3[0] + k4[0]);
-    ray.theta  += (dλ/6.0)*(k1[1] + 2*k2[1] + 2*k3[1] + k4[1]);
-    ray.phi    += (dλ/6.0)*(k1[2] + 2*k2[2] + 2*k3[2] + k4[2]);
-    ray.dr     += (dλ/6.0)*(k1[3] + 2*k2[3] + 2*k3[3] + k4[3]);
-    ray.dtheta += (dλ/6.0)*(k1[4] + 2*k2[4] + 2*k3[4] + k4[4]);
-    ray.dphi   += (dλ/6.0)*(k1[5] + 2*k2[5] + 2*k3[5] + k4[5]);
+    ray.r      += (d_lambda/6.0)*(k1[0] + 2*k2[0] + 2*k3[0] + k4[0]);
+    ray.theta  += (d_lambda/6.0)*(k1[1] + 2*k2[1] + 2*k3[1] + k4[1]);
+    ray.phi    += (d_lambda/6.0)*(k1[2] + 2*k2[2] + 2*k3[2] + k4[2]);
+    ray.dr     += (d_lambda/6.0)*(k1[3] + 2*k2[3] + 2*k3[3] + k4[3]);
+    ray.dtheta += (d_lambda/6.0)*(k1[4] + 2*k2[4] + 2*k3[4] + k4[4]);
+    ray.dphi   += (d_lambda/6.0)*(k1[5] + 2*k2[5] + 2*k3[5] + k4[5]);
 }
 
 void setupCameraCallbacks(GLFWwindow* window) {
