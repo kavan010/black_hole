@@ -38,3 +38,16 @@ foreach(shader ${SHADERS})
     )
 endforeach()
 
+if (WIN32)
+    add_custom_command(TARGET BlackHole3D POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:BlackHole3D> $<TARGET_FILE_DIR:BlackHole3D>
+        COMMAND_EXPAND_LISTS
+    )
+
+    add_custom_command(TARGET BlackHole2D POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:BlackHole2D> $<TARGET_FILE_DIR:BlackHole2D>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
