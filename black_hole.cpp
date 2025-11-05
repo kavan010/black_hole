@@ -14,6 +14,7 @@
 #include <fstream>
 #include <sstream>
 #include "src/utils/logger.hpp"
+#include "src/utils/performance_monitor.hpp"
 #include "src/rendering/shader_manager.hpp"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -614,18 +615,21 @@ int main() {
     setupCameraCallbacks(engine.window);
     vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
-    auto t0 = Clock::now();
-    lastPrintTime = chrono::duration<double>(t0.time_since_epoch()).count();
+    // Performance monitoring
+    PerformanceMonitor perfMonitor;
+    double lastStatsTime = glfwGetTime();
 
-    double lastTime = glfwGetTime();
-    int   renderW  = 800, renderH = 600, numSteps = 80000;
     while (!glfwWindowShouldClose(engine.window)) {
+        double deltaTime = perfMonitor.recordFrame();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // optional, but good practice
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        double now   = glfwGetTime();
-        double dt    = now - lastTime;   // seconds since last frame
-        lastTime     = now;
+        // Log performance stats every 5 seconds
+        double now = glfwGetTime();
+        if (now - lastStatsTime > 5.0) {
+            Logger::info("Performance: ", perfMonitor.getFormattedStats());
+            lastStatsTime = now;
+        }
 
         // Gravity
         for (auto& obj : objects) {
