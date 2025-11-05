@@ -77,6 +77,29 @@
     * Green = well-conserved (accurate geodesics)
     * Orange-Red = drifting (simplified equations)
 
+#### Wavelength Bands (NEW in Phase 6!)
+- **W**: Cycle through wavelength bands
+  - **Band 0 - Radio**: Long wavelengths (mm-cm), cool outer regions
+    * Red-orange-yellow false color
+    * Shows magnetic field structures (simplified)
+  - **Band 1 - Infrared**: Thermal emission (1-10 μm), warm dust
+    * Orange-red heat signature
+    * Intermediate temperature regions
+  - **Band 2 - Optical**: Visible light (400-700 nm), natural colors
+    * Standard photorealistic rendering
+    * Default mode
+  - **Band 3 - X-ray**: High energy (0.1-10 nm), hot plasma
+    * Blue-violet-white colors
+    * Only hottest inner regions visible
+  - **Band 4 - Multi-wavelength**: Composite view (Hubble Palette)
+    * Red = Radio (cool), Green = Optical, Blue = X-ray (hot)
+    * Rainbow-colored temperature gradient
+
+#### Parameter Adjustment (NEW in Phase 6!)
+- **1**: Decrease exposure (fine) -0.01 per press
+- **2**: Increase exposure (fine) +0.01 per press
+- **F**: Toggle performance display (FPS logging)
+
 ## Visual Features
 
 ### Black Hole

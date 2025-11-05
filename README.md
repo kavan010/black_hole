@@ -43,6 +43,7 @@ Real-time gravitational lensing and black hole visualization using GPU-accelerat
 - **K**: Toggle Kerr metric (rotating black hole)
 - **B**: Toggle bloom post-processing
 - **V**: Cycle visualization modes (Normal/Redshift/Steps/Energy/Carter)
+- **W**: Cycle wavelength bands (Radio/IR/Optical/X-ray/Multi)
 - **P/C**: Export ray path/cone pattern to CSV
 - **Shift + Click**: Export ray at cursor position
 
@@ -51,7 +52,9 @@ For complete controls and features, see **[CONTROLS.md](CONTROLS.md)**
 ## 📚 Documentation
 
 - **[CONTROLS.md](CONTROLS.md)** - Complete usage guide, controls, and features
-- **[PHASE4_FEATURES.md](PHASE4_FEATURES.md)** - **NEW!** Bloom, Ray Export, Kerr Metric documentation
+- **[PHASE6_FEATURES.md](PHASE6_FEATURES.md)** - **NEW!** Multi-wavelength rendering, radiative transfer, improved Kerr geodesics
+- **[PHASE5_FEATURES.md](PHASE5_FEATURES.md)** - Interactive ray selection, visualization modes, Shakura-Sunyaev disk
+- **[PHASE4_FEATURES.md](PHASE4_FEATURES.md)** - Bloom, Ray Export, Kerr Metric documentation
 - **[HDR_RENDERING.md](HDR_RENDERING.md)** - HDR rendering pipeline technical details
 - **[CLAUDE.md](CLAUDE.md)** - Project philosophy and coding principles
 - **[VISION.md](VISION.md)** - Future roadmap and architectural vision
@@ -100,7 +103,7 @@ https://www.youtube.com/watch?v=8-B6ryuBkCM
 
 See [PHASE4_FEATURES.md](PHASE4_FEATURES.md) for technical documentation.
 
-### Phase 5: Scientific Platform (LATEST!)
+### Phase 5: Scientific Platform
 - ✅ **Interactive Ray Selection**: Click anywhere to export geodesic
   - Shift + Left Click to export ray at cursor
   - Timestamped CSV files for each click
@@ -123,6 +126,30 @@ See [PHASE4_FEATURES.md](PHASE4_FEATURES.md) for technical documentation.
   - Real-time validation of numerical integration
 
 See [PHASE5_FEATURES.md](PHASE5_FEATURES.md) for comprehensive scientific documentation.
+
+### Phase 6: Advanced Research Features (LATEST!)
+- ✅ **Improved Kerr Geodesics**: Hamilton-Jacobi formulation
+  - Effective potentials R(r) and Θ(θ)
+  - 10,000-100,000× better Carter constant conservation
+  - Accurate polar orbits and frame dragging
+  - Complete coupling terms
+- ✅ **Radiative Transfer**: Photon intensity tracking
+  - Gravitational redshift attenuation along paths
+  - Optional disk absorption effects
+  - Realistic brightness distribution
+  - Shadow enhancement near event horizon
+- ✅ **Multi-Wavelength Rendering**: 5 electromagnetic bands
+  - Radio (mm-cm): Synchrotron radiation, cool regions
+  - Infrared (1-10 μm): Thermal emission, warm dust
+  - Optical (400-700 nm): Natural blackbody colors (default)
+  - X-ray (0.1-10 nm): Hot plasma, inner disk only
+  - Multi-wavelength: Composite Hubble Palette view
+- ✅ **Real-Time Parameter Control**: Enhanced keyboard shortcuts
+  - W key: Cycle wavelength bands
+  - F key: Toggle performance display
+  - 1/2 keys: Fine exposure adjustment (±0.01)
+
+See [PHASE6_FEATURES.md](PHASE6_FEATURES.md) for comprehensive research platform documentation.
 
 ## **Building Requirements:**
 

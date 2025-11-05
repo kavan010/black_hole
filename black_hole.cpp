@@ -265,6 +265,10 @@ struct Engine {
     bool useKerr = false;      // Toggle between Schwarzschild and Kerr metrics
     // -- Visualization mode -- //
     int visualizationMode = 0; // 0 = Normal, 1 = Redshift, 2 = Step count, 3 = Energy, 4 = Carter constant
+    // -- Wavelength band -- //
+    int wavelengthBand = 2; // 0 = Radio, 1 = IR, 2 = Optical, 3 = X-ray, 4 = Multi (all bands)
+    // -- Performance display -- //
+    bool showPerformance = true; // Show FPS/frame time in console
 
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
@@ -348,7 +352,7 @@ struct Engine {
 
         glGenBuffers(1, &kerrUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, kerrUBO);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 4, nullptr, GL_DYNAMIC_DRAW); // spin, useKerr, 2 padding
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 8, nullptr, GL_DYNAMIC_DRAW); // spin, useKerr, vizMode, waveBand, padding
         glBindBufferBase(GL_UNIFORM_BUFFER, 4, kerrUBO); // binding = 4 matches shader
 
         auto result = QuadVAO();
@@ -593,14 +597,19 @@ struct Engine {
         struct KerrData {
             float spin;              // 0 to 1
             float useKerr;           // 0.0 or 1.0 (bool as float for std140)
-            float visualizationMode; // 0-3 visualization modes
-            float _pad6;
+            float visualizationMode; // 0-4 visualization modes
+            float wavelengthBand;    // 0-4 wavelength bands (Radio/IR/Optical/X-ray/Multi)
+            float _pad1, _pad2, _pad3, _pad4; // Additional padding for std140
         } data;
 
         data.spin = kerrSpin;
         data.useKerr = useKerr ? 1.0f : 0.0f;
         data.visualizationMode = float(visualizationMode);
-        data._pad6 = 0.0f;
+        data.wavelengthBand = float(wavelengthBand);
+        data._pad1 = 0.0f;
+        data._pad2 = 0.0f;
+        data._pad3 = 0.0f;
+        data._pad4 = 0.0f;
 
         glBindBuffer(GL_UNIFORM_BUFFER, kerrUBO);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(data), &data);
@@ -749,6 +758,30 @@ void setupCameraCallbacks(GLFWwindow* window) {
             const char* modes[] = {"Normal", "Gravitational Redshift", "Integration Steps", "Energy Conservation", "Carter Constant"};
             Logger::info("Visualization mode: ", modes[engine.visualizationMode]);
         }
+
+        // Wavelength band controls
+        if (action == GLFW_PRESS && key == GLFW_KEY_W) {
+            engine.wavelengthBand = (engine.wavelengthBand + 1) % 5;
+            const char* bands[] = {"Radio", "Infrared", "Optical (visible)", "X-ray", "Multi-wavelength"};
+            Logger::info("Wavelength band: ", bands[engine.wavelengthBand]);
+        }
+
+        // Performance display toggle
+        if (action == GLFW_PRESS && key == GLFW_KEY_F) {
+            engine.showPerformance = !engine.showPerformance;
+            Logger::info("Performance display ", (engine.showPerformance ? "enabled" : "disabled"));
+        }
+
+        // Fine exposure adjustment
+        if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+            if (key == GLFW_KEY_1) {
+                engine.exposure = std::max(0.01f, engine.exposure - 0.01f);
+                Logger::info("Exposure: ", engine.exposure, " (fine)");
+            } else if (key == GLFW_KEY_2) {
+                engine.exposure += 0.01f;
+                Logger::info("Exposure: ", engine.exposure, " (fine)");
+            }
+        }
     });
 }
 
@@ -771,9 +804,9 @@ int main() {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // optional, but good practice
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Log performance stats every 5 seconds
+        // Log performance stats every 5 seconds (if enabled)
         double now = glfwGetTime();
-        if (now - lastStatsTime > 5.0) {
+        if (engine.showPerformance && now - lastStatsTime > 5.0) {
             Logger::info("Performance: ", perfMonitor.getFormattedStats());
             lastStatsTime = now;
         }

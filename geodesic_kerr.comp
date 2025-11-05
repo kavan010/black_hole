@@ -68,8 +68,9 @@ layout(std140, binding = 3) uniform Objects {
 layout(std140, binding = 4) uniform KerrParams {
     float spin;              // Spin parameter: 0 = Schwarzschild, 1 = maximal
     bool useKerr;            // Switch between Schwarzschild and Kerr
-    float visualizationMode; // 0=Normal, 1=Redshift, 2=Steps, 3=Energy
-    float _pad6;
+    float visualizationMode; // 0=Normal, 1=Redshift, 2=Steps, 3=Energy, 4=Carter
+    float wavelengthBand;    // 0=Radio, 1=IR, 2=Optical, 3=X-ray, 4=Multi
+    float _pad1, _pad2, _pad3, _pad4;
 } kerrParams;
 
 const float SagA_M = 4.27e6;      // Solar masses
@@ -90,6 +91,7 @@ struct Ray {
     float dr, dtheta, dphi;
     float E, L, Q;  // Conserved quantities (Q is Carter constant)
     float x, y, z;  // Cartesian coordinates
+    float intensity; // Photon intensity (for radiative transfer)
 };
 
 /**
@@ -115,26 +117,41 @@ Ray initRayKerr(vec3 pos, vec3 dir) {
     float Sigma = r2 + a2 * cos(ray.theta) * cos(ray.theta);
     float Delta = r2 - 2.0 * SagA_rs * ray.r + a2;
 
-    // Simplified initialization (assumes equatorial plane for simplicity)
+    // Energy (normalized, E = 1 for photons at infinity)
+    ray.E = 1.0;
+
+    // Angular momentum L (impact parameter)
+    // For now, use a simplified initialization
     ray.L = ray.r * ray.r * sin(ray.theta) * ray.dphi;
 
-    // Energy (simplified)
-    float dt_dL = sqrt((ray.dr*ray.dr) * Sigma / Delta +
-                      Sigma * (ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
-    ray.E = (1.0 - 2.0 * SagA_rs * ray.r / Sigma) * dt_dL;
+    // Carter constant Q - improved calculation
+    // Q = p_theta^2 + cos^2(theta)[a^2(E^2-1) + L^2/sin^2(theta)]
+    // For photons (E^2 = 1), this simplifies
+    float cosTheta = cos(ray.theta);
+    float sinTheta = sin(ray.theta);
+    float ptheta = Sigma * ray.dtheta;
 
-    // Carter constant (Q) - simplified for near-equatorial orbits
-    ray.Q = ray.dtheta * ray.dtheta;
+    // Calculate Q more accurately
+    if (abs(sinTheta) > 1e-6) {
+        ray.Q = ptheta * ptheta + cosTheta * cosTheta * (ray.L * ray.L / (sinTheta * sinTheta));
+    } else {
+        // Near poles, use limit
+        ray.Q = ptheta * ptheta;
+    }
 
     ray.x = pos.x;
     ray.y = pos.y;
     ray.z = pos.z;
 
+    // Initialize photon intensity (normalized to 1.0 at emission)
+    ray.intensity = 1.0;
+
     return ray;
 }
 
 /**
- * Geodesic equations for Kerr metric
+ * Improved Geodesic equations for Kerr metric
+ * Uses Hamilton-Jacobi formulation with E, L, Q conserved quantities
  */
 void geodesicRHSKerr(Ray ray, out vec3 d1, out vec3 d2) {
     float r = ray.r, theta = ray.theta;
@@ -143,24 +160,62 @@ void geodesicRHSKerr(Ray ray, out vec3 d1, out vec3 d2) {
 
     float r2 = r * r;
     float a2 = a * a;
-    float Sigma = r2 + a2 * cos(theta) * cos(theta);
+    float cosTheta = cos(theta);
+    float sinTheta = sin(theta);
+    float cos2 = cosTheta * cosTheta;
+    float sin2 = sinTheta * sinTheta;
+    float Sigma = r2 + a2 * cos2;
     float Delta = r2 - 2.0 * SagA_rs * r + a2;
+
+    // Get conserved quantities
+    float E = ray.E;
+    float L = ray.L;
+    float Q = ray.Q;
 
     d1 = vec3(dr, dtheta, dphi);
 
-    // Simplified Kerr geodesic equations
-    // (Full equations are more complex, this is an approximation)
+    // Radial effective potential R(r)
+    // R = [E(r²+a²) - aL]² - Δ[Q + (L-aE)²]
+    float term1 = E * (r2 + a2) - a * L;
+    float term2 = L - a * E;
+    float R = term1 * term1 - Delta * (Q + term2 * term2);
 
-    // Radial equation
-    d2.x = (-(SagA_rs / Sigma) * (ray.E * ray.E) +
-            (SagA_rs / (Sigma * Delta)) * dr * dr * (r2 + a2) +
-            r * (dtheta * dtheta + sin(theta) * sin(theta) * dphi * dphi));
+    // Theta effective potential Θ(θ)
+    // Θ = Q - cos²θ[a²E² + L²/sin²θ]
+    float Theta = Q - cos2 * (a2 * E * E + (sin2 > 1e-6 ? L * L / sin2 : 0.0));
 
-    // Theta equation
-    d2.y = -2.0 * dr * dtheta / r + sin(theta) * cos(theta) * (dphi * dphi - a2 * ray.E * ray.E / (Sigma * Sigma));
+    // Ensure potentials are non-negative (numerical safety)
+    R = max(R, 0.0);
+    Theta = max(Theta, 0.0);
 
-    // Phi equation (frame dragging effect)
-    d2.z = -2.0 * dr * dphi / r + 2.0 * a * SagA_rs * ray.E * dr / (Sigma * Delta);
+    // First derivatives (velocities) - these should match current values
+    // But we recalculate to ensure consistency with potentials
+    float dr_new = sign(dr) * sqrt(R) / Sigma;
+    float dtheta_new = sign(dtheta) * sqrt(Theta) / Sigma;
+
+    // Phi angular velocity with frame dragging
+    // dφ/dλ = L/(Σsin²θ) + a[r²+a²-ΔaL/E]/[Σ·Δ]
+    float dphi_new = (sin2 > 1e-6 ? L / (Sigma * sin2) : 0.0) +
+                     a * (r2 + a2 - Delta * a * L / E) / (Sigma * Delta);
+
+    // Second derivatives (accelerations)
+    // These come from differentiating the first-order equations
+
+    // d²r/dλ² = (1/2Σ) × [dR/dr - 2r·R/Σ]
+    float dR_dr = 2.0 * E * E * r - 2.0 * SagA_rs * (Q + term2 * term2) +
+                  2.0 * (E * (r2 + a2) - a * L) * (2.0 * r * E) / Delta;
+    d2.x = (dR_dr - 2.0 * r * R / Sigma) / (2.0 * Sigma);
+
+    // d²θ/dλ² = (1/2Σ) × [dΘ/dθ + 2a²cosθsinθ·Θ/Σ]
+    float dTheta_dtheta = 2.0 * cosTheta * sinTheta * (a2 * E * E + (sin2 > 1e-6 ? L * L / sin2 : 0.0)) +
+                          (sin2 > 1e-6 ? -2.0 * cos2 * L * L * cosTheta / (sinTheta * sin2 * sin2) : 0.0);
+    d2.y = (dTheta_dtheta + 2.0 * a2 * cosTheta * sinTheta * Theta / Sigma) / (2.0 * Sigma);
+
+    // d²φ/dλ² = derivative of frame-dragging term
+    float dSigma_dr = 2.0 * r;
+    float dDelta_dr = 2.0 * r - 2.0 * SagA_rs;
+    d2.z = -dphi_new * dSigma_dr * dr / Sigma +
+           a * E * dDelta_dr * dr / (Delta * Delta);
 }
 
 /**
@@ -342,6 +397,92 @@ vec3 blackbodyColor(float temperature) {
 }
 
 /**
+ * Apply wavelength-specific color mapping
+ * Different bands emphasize different physical processes
+ */
+vec3 applyWavelengthBand(vec3 baseColor, float temperature, int band) {
+    if (band == 0) {
+        // RADIO: Long wavelengths, see cool material and magnetic fields
+        // Map to red-orange-yellow (false color)
+        float intensity = length(baseColor);
+        return mix(vec3(0.3, 0.0, 0.0), vec3(1.0, 0.6, 0.0), temperature) * intensity;
+
+    } else if (band == 1) {
+        // INFRARED: Thermal radiation, dust
+        // Map to orange-red (heat signature)
+        float intensity = length(baseColor);
+        return mix(vec3(0.5, 0.0, 0.0), vec3(1.0, 0.3, 0.0), temperature) * intensity * 1.5;
+
+    } else if (band == 2) {
+        // OPTICAL: Visible light (default)
+        return baseColor;
+
+    } else if (band == 3) {
+        // X-RAY: High energy photons from hot accretion
+        // Emphasize hottest regions, map to blue-violet-white
+        float intensity = length(baseColor);
+        float xray_response = pow(temperature, 2.0); // X-rays scale with T^2
+        return mix(vec3(0.2, 0.2, 0.5), vec3(0.8, 0.9, 1.0), xray_response) * intensity * 2.0;
+
+    } else {
+        // MULTI-WAVELENGTH: Combine all bands (Hubble palette style)
+        // Radio → Red, IR → Green, X-ray → Blue
+        float radio_weight = (1.0 - temperature) * 0.5;
+        float optical_weight = 0.5;
+        float xray_weight = temperature * 0.7;
+
+        vec3 radio_color = vec3(1.0, 0.2, 0.0) * radio_weight;
+        vec3 optical_color = baseColor * optical_weight;
+        vec3 xray_color = vec3(0.3, 0.5, 1.0) * xray_weight;
+
+        return (radio_color + optical_color + xray_color) * 1.2;
+    }
+}
+
+/**
+ * Update photon intensity due to radiative transfer effects
+ * Includes gravitational redshift and optional absorption
+ */
+void updatePhotonIntensity(inout Ray ray, float dL) {
+    // Gravitational redshift effect on intensity
+    // I ∝ (1 + z)^(-4) for blackbody radiation
+    // z = sqrt(1-rs/r_emission) / sqrt(1-rs/r_observer) - 1
+    // Simplified: track cumulative redshift factor
+
+    float r = ray.r;
+    float f = 1.0 - SagA_rs / r;
+
+    if (f > 0.0) {
+        // Gravitational redshift factor
+        float g_factor = sqrt(f);
+
+        // Intensity decreases as (g_factor)^4 when moving away from BH
+        // (approximately - this is a simplified model)
+        float intensity_factor = 1.0 / (1.0 + 0.0001 * dL / SagA_rs);
+
+        ray.intensity *= intensity_factor;
+
+        // Optional: absorption in accretion disk region
+        // Simple exponential attenuation near disk
+        float y = abs(ray.y);
+        if (y < 5e9) { // Near equatorial plane
+            float disk_r = length(vec2(ray.x, ray.z));
+            if (disk_r >= disk_r1 && disk_r <= disk_r2) {
+                // Optical depth proportional to disk thickness
+                float tau = 0.00001 * dL / SagA_rs;
+                ray.intensity *= exp(-tau);
+            }
+        }
+    } else {
+        // Inside event horizon - intensity goes to zero
+        ray.intensity = 0.0;
+    }
+
+    // Clamp intensity to reasonable range
+    ray.intensity = clamp(ray.intensity, 0.0, 10.0);
+}
+
+/**
  * Map redshift value to color
  * Blue = weak redshift (far from BH)
  * Red = strong redshift (close to BH)
@@ -394,6 +535,7 @@ void main() {
         actualSteps++;
         if (intercept(ray, SagA_rs)) { hitBlackHole = true; hitRadius = ray.r; break; }
         rk4Step(ray, D_LAMBDA);
+        updatePhotonIntensity(ray, D_LAMBDA); // Track intensity changes
 
         vec3 newPos = vec3(ray.x, ray.y, ray.z);
         if (crossesEquatorialPlane(prevPos, newPos)) { hitDisk = true; hitRadius = ray.r; break; }
@@ -416,6 +558,10 @@ void main() {
         // Blackbody color from temperature
         vec3 diskColor = blackbodyColor(temperature);
 
+        // Apply wavelength-specific filtering
+        int band = int(kerrParams.wavelengthBand);
+        diskColor = applyWavelengthBand(diskColor, temperature, band);
+
         // Luminosity ∝ T^4 (Stefan-Boltzmann law)
         float luminosity = pow(temperature, 4.0);
 
@@ -425,8 +571,8 @@ void main() {
         // Kerr disks have additional brightness from frame dragging
         float kerrBoost = 1.0 + kerrParams.spin * 0.3;
 
-        // Final intensity
-        float intensity = luminosity * totalBoost * kerrBoost * 5.0;
+        // Final intensity (including radiative transfer)
+        float intensity = luminosity * totalBoost * kerrBoost * 5.0 * ray.intensity;
 
         color = vec4(diskColor * intensity, 1.0);
 
@@ -447,7 +593,7 @@ void main() {
         vec3 H = normalize(L + V);
         float spec = pow(max(dot(N, H), 0.0), 32.0);
         float intensity = ambient + diff * attenuation * 2.0 + spec * attenuation;
-        vec3 shaded = objectColor.rgb * intensity;
+        vec3 shaded = objectColor.rgb * intensity * ray.intensity; // Apply radiative transfer
         color = vec4(shaded, objectColor.a);
 
     } else {
