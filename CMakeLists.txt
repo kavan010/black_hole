@@ -37,6 +37,13 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
+# ImPlot source files
+set(IMPLOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/implot)
+set(IMPLOT_SOURCES
+    ${IMPLOT_DIR}/implot.cpp
+    ${IMPLOT_DIR}/implot_items.cpp
+)
+
 # Common dependencies
 set(DEPS glfw GLEW::GLEW glm::glm OpenGL::GL)
 
@@ -56,12 +63,14 @@ add_executable(BlackHole3D
     black_hole.cpp
     src/ui/gui_manager.cpp
     ${IMGUI_SOURCES}
+    ${IMPLOT_SOURCES}
 )
 target_link_libraries(BlackHole3D PRIVATE ${DEPS})
 target_include_directories(BlackHole3D PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
+    ${IMPLOT_DIR}
 )
 
 # Shader files (copy to output dir)

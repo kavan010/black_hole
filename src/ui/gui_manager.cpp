@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include "implot.h"
 #include <iostream>
 #include <cmath>
 
@@ -48,6 +49,8 @@ void GUIManager::initialize(GLFWwindow* window, const char* glsl_version) {
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();  // Create ImPlot context
+
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
 
@@ -59,13 +62,14 @@ void GUIManager::initialize(GLFWwindow* window, const char* glsl_version) {
     applyDarkTheme();
 
     initialized = true;
-    std::cout << "[GUI] ImGui initialized successfully\n";
+    std::cout << "[GUI] ImGui and ImPlot initialized successfully\n";
 }
 
 void GUIManager::shutdown() {
     if (initialized) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
+        ImPlot::DestroyContext();  // Destroy ImPlot context
         ImGui::DestroyContext();
         initialized = false;
     }
@@ -317,10 +321,25 @@ void GUIManager::renderPerformancePanel(double deltaTime, double fps) {
 
     ImGui::Begin("Performance", &showPerformancePanel);
 
-    ImGui::Text("FPS: %.1f", fps);
-    ImGui::Text("Frame Time: %.2f ms", deltaTime * 1000.0);
-    ImGui::PlotLines("FPS", fpsHistory, PERF_HISTORY_SIZE, perfHistoryOffset, nullptr, 0.0f, 120.0f, ImVec2(0, 80));
-    ImGui::PlotLines("Frame Time (ms)", frameTimeHistory, PERF_HISTORY_SIZE, perfHistoryOffset, nullptr, 0.0f, 50.0f, ImVec2(0, 80));
+    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "FPS: %.1f", fps);
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "Frame Time: %.2f ms", deltaTime * 1000.0);
+
+    ImGui::Separator();
+
+    // Use ImPlot for better graphs
+    if (ImPlot::BeginPlot("Frame Rate", ImVec2(-1, 150))) {
+        ImPlot::SetupAxes("Frame", "FPS");
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 120, ImGuiCond_Always);
+        ImPlot::PlotLine("FPS", fpsHistory, PERF_HISTORY_SIZE);
+        ImPlot::EndPlot();
+    }
+
+    if (ImPlot::BeginPlot("Frame Time", ImVec2(-1, 150))) {
+        ImPlot::SetupAxes("Frame", "ms");
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 50, ImGuiCond_Always);
+        ImPlot::PlotLine("Frame Time", frameTimeHistory, PERF_HISTORY_SIZE);
+        ImPlot::EndPlot();
+    }
 
     ImGui::End();
 }
