@@ -6,12 +6,28 @@ Real-time gravitational lensing and black hole visualization using GPU-accelerat
 
 ## ✨ Features
 
-- **Accurate Physics**: 4th-order Runge-Kutta integration of Schwarzschild geodesics
-- **HDR Rendering**: High Dynamic Range pipeline with ACES filmic tone mapping
+### Core Physics
+- **Kerr Metric**: Rotating black holes with frame dragging and ergosphere
+- **Schwarzschild Metric**: Non-rotating black hole geodesics
+- **4th-Order RK4 Integration**: Accurate light ray propagation
+- **Conserved Quantities**: Energy, angular momentum, Carter constant
+
+### Rendering
+- **HDR Pipeline**: RGBA16F textures with ACES filmic tone mapping
+- **Bloom Post-Processing**: Realistic glow around bright objects
 - **Real-time Performance**: 60+ FPS at 1080p with adaptive resolution
-- **Interactive Controls**: Mouse-driven camera orbiting, keyboard exposure adjustment
-- **Spacetime Visualization**: Curved grid showing gravitational warping
-- **Newtonian Gravity**: Optional N-body simulation of orbiting objects
+- **Spacetime Grid**: Curved visualization of gravitational warping
+
+### Scientific Tools
+- **Ray Path Export**: CSV export for geodesic analysis
+- **Cone Pattern Export**: Multiple rays for 3D visualization
+- **Performance Metrics**: Real-time FPS and frame time tracking
+
+### Interaction
+- **Interactive Camera**: Mouse-driven orbiting and zooming
+- **Exposure Controls**: Dynamic range adjustment (E/Q/R keys)
+- **Kerr Controls**: Toggle rotation and adjust spin (K/[/] keys)
+- **Bloom Controls**: Toggle and adjust glow effect (B/+/- keys)
 
 ## 🚀 Quick Start
 
@@ -22,19 +38,22 @@ Real-time gravitational lensing and black hole visualization using GPU-accelerat
 **Basic Controls:**
 - **Mouse Drag**: Orbit camera around black hole
 - **Mouse Scroll**: Zoom in/out
-- **E/Q**: Increase/decrease HDR exposure
-- **R**: Reset exposure to default
-- **G**: Toggle gravity simulation
+- **E/Q/R**: Increase/decrease/reset HDR exposure
+- **G**: Toggle Newtonian gravity simulation
+- **K**: Toggle Kerr metric (rotating black hole)
+- **B**: Toggle bloom post-processing
+- **P/C**: Export ray path/cone pattern to CSV
 
 For complete controls and features, see **[CONTROLS.md](CONTROLS.md)**
 
 ## 📚 Documentation
 
 - **[CONTROLS.md](CONTROLS.md)** - Complete usage guide, controls, and features
+- **[PHASE4_FEATURES.md](PHASE4_FEATURES.md)** - **NEW!** Bloom, Ray Export, Kerr Metric documentation
 - **[HDR_RENDERING.md](HDR_RENDERING.md)** - HDR rendering pipeline technical details
 - **[CLAUDE.md](CLAUDE.md)** - Project philosophy and coding principles
 - **[VISION.md](VISION.md)** - Future roadmap and architectural vision
-- **[REFACTORING_PLAN.md](REFACTORING_PLAN.md)** - Detailed refactoring plan (3 phases)
+- **[REFACTORING_PLAN.md](REFACTORING_PLAN.md)** - Detailed refactoring plan
 - **[PROJECT_REVIEW.md](PROJECT_REVIEW.md)** - Comprehensive codebase analysis
 
 ## 🎥 Video Tutorial
@@ -62,7 +81,22 @@ https://www.youtube.com/watch?v=8-B6ryuBkCM
 - ✅ Comprehensive controls documentation
 - ✅ Improved logging system with levels
 
-See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for detailed analysis.
+### Phase 4: Innovation (NEW!)
+- ✅ **Kerr Metric**: Rotating black holes with frame dragging effects
+  - Boyer-Lindquist coordinates implementation
+  - Ergosphere and innermost stable circular orbit (ISCO)
+  - Runtime switching between Schwarzschild and Kerr
+  - Spin parameter adjustment (0.0 to 1.0)
+- ✅ **Bloom Post-Processing**: Realistic glow effect
+  - Separable Gaussian blur at quarter resolution
+  - 10 iterations for smooth bloom
+  - Adjustable threshold and intensity
+- ✅ **Ray Path Export**: Scientific analysis tools
+  - Single ray export with full geodesic data
+  - Cone pattern export for 3D visualization
+  - CSV format compatible with Python/MATLAB
+
+See [PHASE4_FEATURES.md](PHASE4_FEATURES.md) for technical documentation.
 
 ## **Building Requirements:**
 

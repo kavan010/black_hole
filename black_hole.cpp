@@ -15,7 +15,9 @@
 #include <sstream>
 #include "src/utils/logger.hpp"
 #include "src/utils/performance_monitor.hpp"
+#include "src/utils/ray_path_exporter.hpp"
 #include "src/rendering/shader_manager.hpp"
+#include "src/rendering/bloom_renderer.hpp"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -202,6 +204,7 @@ struct Engine {
     GLuint cameraUBO = 0;
     GLuint diskUBO = 0;
     GLuint objectsUBO = 0;
+    GLuint kerrUBO = 0;
     // -- grid mess vars -- //
     GLuint gridVAO = 0;
     GLuint gridVBO = 0;
@@ -210,6 +213,11 @@ struct Engine {
     GridCache gridCache;  // Cache for grid regeneration
     // -- HDR vars -- //
     float exposure = 1.0f;
+    // -- Bloom renderer -- //
+    BloomRenderer bloomRenderer;
+    // -- Kerr parameters -- //
+    float kerrSpin = 0.0f;    // 0 = Schwarzschild, 1 = maximal rotation
+    bool useKerr = false;      // Toggle between Schwarzschild and Kerr metrics
 
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
@@ -270,7 +278,7 @@ struct Engine {
         this->shaderProgram = ShaderManager::createProgram(quadVertSrc, quadFragSrc);
         gridShaderProgram = ShaderManager::createProgramFromFiles("grid.vert", "grid.frag");
         tonemapProgram = createTonemapProgram();
-        computeProgram = ShaderManager::createComputeProgram("geodesic.comp");
+        computeProgram = ShaderManager::createComputeProgram("geodesic_kerr.comp");
         glGenBuffers(1, &cameraUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
         glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW); // alloc ~128 bytes
@@ -283,7 +291,7 @@ struct Engine {
 
         glGenBuffers(1, &objectsUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, objectsUBO);
-        // allocate space for 16 objects: 
+        // allocate space for 16 objects:
         // sizeof(int) + padding + 16×(vec4 posRadius + vec4 color)
         GLsizeiptr objUBOSize = sizeof(int) + 3 * sizeof(float)
             + 16 * (sizeof(vec4) + sizeof(vec4))
@@ -291,10 +299,18 @@ struct Engine {
         glBufferData(GL_UNIFORM_BUFFER, objUBOSize, nullptr, GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_UNIFORM_BUFFER, 3, objectsUBO);  // binding = 3 matches shader
 
+        glGenBuffers(1, &kerrUBO);
+        glBindBuffer(GL_UNIFORM_BUFFER, kerrUBO);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 4, nullptr, GL_DYNAMIC_DRAW); // spin, useKerr, 2 padding
+        glBindBufferBase(GL_UNIFORM_BUFFER, 4, kerrUBO); // binding = 4 matches shader
+
         auto result = QuadVAO();
         this->quadVAO = result[0];
         this->hdrTexture = result[1];  // Use HDR texture
         this->texture = result[1];     // Keep for compatibility
+
+        // Initialize bloom renderer
+        bloomRenderer.initialize(WIDTH, HEIGHT, quadVAO);
     }
     void generateGrid(const vector<ObjectData>& objects) {
         const int gridSize = 25;
@@ -383,13 +399,27 @@ struct Engine {
         glEnable(GL_DEPTH_TEST);
     }
     void drawFullScreenQuad() {
-        glUseProgram(tonemapProgram); // Use tone mapping shader
+        // Render bloom effect
+        GLuint bloomTexture = bloomRenderer.render(hdrTexture);
+
+        // Apply tone mapping with bloom
+        glUseProgram(tonemapProgram);
         glBindVertexArray(quadVAO);
 
+        // Bind HDR texture
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, hdrTexture);
         glUniform1i(glGetUniformLocation(tonemapProgram, "hdrTexture"), 0);
+
+        // Bind bloom texture
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, bloomTexture);
+        glUniform1i(glGetUniformLocation(tonemapProgram, "bloomTexture"), 1);
+
+        // Set uniforms
         glUniform1f(glGetUniformLocation(tonemapProgram, "exposure"), exposure);
+        glUniform1f(glGetUniformLocation(tonemapProgram, "bloomStrength"), bloomRenderer.bloomStrength);
+        glUniform1i(glGetUniformLocation(tonemapProgram, "enableBloom"), bloomRenderer.enabled);
 
         glDisable(GL_DEPTH_TEST);  // draw as background
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 6);  // 2 triangles
@@ -439,6 +469,7 @@ struct Engine {
         uploadCameraUBO(cam);
         uploadDiskUBO();
         uploadObjectsUBO(objects);
+        uploadKerrUBO();
 
         // 3) bind it as image unit 0
         glBindImageTexture(0, hdrTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
@@ -511,7 +542,23 @@ struct Engine {
         glBindBuffer(GL_UNIFORM_BUFFER, diskUBO);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(diskData), diskData);
     }
-    
+    void uploadKerrUBO() {
+        struct KerrData {
+            float spin;      // 0 to 1
+            float useKerr;   // 0.0 or 1.0 (bool as float for std140)
+            float _pad5;
+            float _pad6;
+        } data;
+
+        data.spin = kerrSpin;
+        data.useKerr = useKerr ? 1.0f : 0.0f;
+        data._pad5 = 0.0f;
+        data._pad6 = 0.0f;
+
+        glBindBuffer(GL_UNIFORM_BUFFER, kerrUBO);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(data), &data);
+    }
+
     vector<GLuint> QuadVAO(){
         float quadVertices[] = {
             // positions   // texCoords
@@ -600,6 +647,52 @@ void setupCameraCallbacks(GLFWwindow* window) {
             } else if (key == GLFW_KEY_R) {
                 engine.exposure = 1.0f;
                 Logger::info("Exposure reset to 1.0");
+            }
+        }
+
+        // Bloom controls
+        if (action == GLFW_PRESS) {
+            if (key == GLFW_KEY_B) {
+                engine.bloomRenderer.enabled = !engine.bloomRenderer.enabled;
+                Logger::info("Bloom ", (engine.bloomRenderer.enabled ? "enabled" : "disabled"));
+            } else if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) {
+                engine.bloomRenderer.bloomStrength += 0.01f;
+                Logger::info("Bloom strength: ", engine.bloomRenderer.bloomStrength);
+            } else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) {
+                engine.bloomRenderer.bloomStrength = std::max(0.0f, engine.bloomRenderer.bloomStrength - 0.01f);
+                Logger::info("Bloom strength: ", engine.bloomRenderer.bloomStrength);
+            }
+        }
+
+        // Ray path export controls
+        if (action == GLFW_PRESS) {
+            if (key == GLFW_KEY_P) {
+                // Export single ray path (center of screen)
+                vec3 camPos = camera.position();
+                vec3 camFwd = normalize(camera.target - camPos);
+                RayPathExporter exporter;
+                exporter.exportPath(camPos, camFwd, "ray_path.csv");
+            } else if (key == GLFW_KEY_C) {
+                // Export cone pattern (multiple rays)
+                vec3 camPos = camera.position();
+                vec3 camFwd = normalize(camera.target - camPos);
+                RayPathExporter exporter;
+                exporter.exportConePattern(camPos, camFwd, 11, 0.05f, "ray_cone.csv");
+            }
+        }
+
+        // Kerr metric controls
+        if (action == GLFW_PRESS) {
+            if (key == GLFW_KEY_K) {
+                engine.useKerr = !engine.useKerr;
+                Logger::info("Kerr metric ", (engine.useKerr ? "enabled" : "disabled"),
+                           " (spin = ", engine.kerrSpin, ")");
+            } else if (key == GLFW_KEY_LEFT_BRACKET) {
+                engine.kerrSpin = std::max(0.0f, engine.kerrSpin - 0.1f);
+                Logger::info("Kerr spin: ", engine.kerrSpin);
+            } else if (key == GLFW_KEY_RIGHT_BRACKET) {
+                engine.kerrSpin = std::min(1.0f, engine.kerrSpin + 0.1f);
+                Logger::info("Kerr spin: ", engine.kerrSpin);
             }
         }
     });

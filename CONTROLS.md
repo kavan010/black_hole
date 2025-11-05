@@ -12,9 +12,23 @@
   - Range: 10 billion to 1 trillion meters
 
 ### Keyboard Controls
+
+#### Physics
 - **G**: Toggle gravity simulation on/off
   - When enabled, celestial objects orbit according to Newtonian gravity
   - When disabled, objects remain stationary
+- **K**: Toggle Kerr metric (rotating black hole)
+  - OFF: Schwarzschild metric (non-rotating)
+  - ON: Kerr metric with frame dragging effects
+  - See current spin parameter in console
+- **[**: Decrease Kerr spin parameter (-0.1)
+  - Range: 0.0 (Schwarzschild) to 1.0 (maximal rotation)
+  - Only affects rendering when Kerr mode is enabled
+- **]**: Increase Kerr spin parameter (+0.1)
+  - Higher spin = stronger frame dragging
+  - Visible asymmetry in accretion disk
+
+#### Rendering
 - **E**: Increase HDR exposure (+0.1)
   - Makes the scene brighter
   - Useful for viewing darker regions
@@ -23,6 +37,23 @@
   - Useful when accretion disk is too bright
 - **R**: Reset exposure to default (1.0)
   - Returns to balanced brightness
+- **B**: Toggle bloom post-processing
+  - Creates realistic glow around bright objects
+  - Simulates camera sensor/eye response
+- **+** / **=**: Increase bloom strength (+0.01)
+  - Stronger glow effect
+- **-**: Decrease bloom strength (-0.01)
+  - Subtler glow effect
+
+#### Scientific Tools
+- **P**: Export single ray path to CSV
+  - Exports geodesic from camera center to destination
+  - Output: `ray_path.csv` (lambda, r, theta, phi, x, y, z, velocities, E, L)
+  - Useful for scientific analysis and validation
+- **C**: Export cone pattern to CSV
+  - Exports 11 rays in a cone around camera direction
+  - Output: `ray_cone.csv` (ray_id, coordinates)
+  - Useful for 3D visualization of geodesics
 
 ## Visual Features
 
@@ -170,10 +201,36 @@ Logger::setLevel(LogLevel::DEBUG);  // For verbose output
 Logger::setLevel(LogLevel::WARN);   // For quiet mode
 ```
 
-## Future Features
-See `REFACTORING_PLAN.md` Phase 4 for planned enhancements:
-- Kerr metric (rotating black holes)
-- Bloom post-processing
-- Ray path visualization
-- Interactive parameter sliders
+## Phase 4 Features (Implemented)
+
+All Phase 4 features are now complete! See `PHASE4_FEATURES.md` for detailed documentation:
+
+- ✅ **Kerr Metric**: Rotating black holes with frame dragging
+- ✅ **Bloom Post-Processing**: Realistic glow around bright objects
+- ✅ **Ray Path Export**: CSV export for scientific analysis
+
+### Kerr Metric Quick Start
+1. Press `K` to enable Kerr mode
+2. Press `]` several times to increase spin (try 0.7-0.9)
+3. Observe asymmetric accretion disk and frame dragging
+4. Press `C` to export geodesics and analyze in Python
+
+### Bloom Quick Start
+1. Press `B` to toggle bloom
+2. Adjust strength with `+` / `-`
+3. Combine with exposure controls (`E`/`Q`) for best results
+
+### Ray Export Quick Start
+1. Point camera at interesting feature
+2. Press `P` for single ray or `C` for cone pattern
+3. Analyze CSV files in Python/MATLAB/Excel
+4. See `PHASE4_FEATURES.md` for visualization examples
+
+## Future Enhancements (Phase 5)
+Potential future additions:
+- Adaptive timestepping (RK45)
+- Full Carter constant conservation
+- Realistic accretion disk physics (Shakura-Sunyaev)
+- Gravitational redshift visualization
+- Interactive ray selection (click to export)
 - VR support

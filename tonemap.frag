@@ -3,7 +3,10 @@ in vec2 TexCoord;
 out vec4 FragColor;
 
 uniform sampler2D hdrTexture;
+uniform sampler2D bloomTexture;
 uniform float exposure;
+uniform float bloomStrength;
+uniform bool enableBloom;
 
 // ACES Filmic Tone Mapping
 vec3 ACESFilm(vec3 x) {
@@ -40,6 +43,12 @@ vec3 Uncharted2(vec3 color) {
 
 void main() {
     vec3 hdrColor = texture(hdrTexture, TexCoord).rgb;
+
+    // Add bloom if enabled
+    if (enableBloom) {
+        vec3 bloomColor = texture(bloomTexture, TexCoord).rgb;
+        hdrColor += bloomColor * bloomStrength;
+    }
 
     // Apply exposure
     hdrColor *= exposure;
