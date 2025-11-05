@@ -25,6 +25,18 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(OpenGL REQUIRED)
 
+# ImGui source files
+set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
 # Common dependencies
 set(DEPS glfw GLEW::GLEW glm::glm OpenGL::GL)
 
@@ -40,9 +52,17 @@ target_link_libraries(BlackHole2D PRIVATE ${DEPS})
 target_include_directories(BlackHole2D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 3D Black Hole executable
-add_executable(BlackHole3D black_hole.cpp)
+add_executable(BlackHole3D
+    black_hole.cpp
+    src/ui/gui_manager.cpp
+    ${IMGUI_SOURCES}
+)
 target_link_libraries(BlackHole3D PRIVATE ${DEPS})
-target_include_directories(BlackHole3D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(BlackHole3D PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
 
 # Shader files (copy to output dir)
 file(GLOB SHADERS

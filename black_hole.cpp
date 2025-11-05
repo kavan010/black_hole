@@ -19,6 +19,7 @@
 #include "src/utils/ray_path_exporter.hpp"
 #include "src/rendering/shader_manager.hpp"
 #include "src/rendering/bloom_renderer.hpp"
+#include "src/ui/gui_manager.hpp"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -260,6 +261,8 @@ struct Engine {
     float exposure = 1.0f;
     // -- Bloom renderer -- //
     BloomRenderer bloomRenderer;
+    // -- GUI manager -- //
+    GUIManager guiManager;
     // -- Kerr parameters -- //
     float kerrSpin = 0.0f;    // 0 = Schwarzschild, 1 = maximal rotation
     bool useKerr = false;      // Toggle between Schwarzschild and Kerr metrics
@@ -362,6 +365,10 @@ struct Engine {
 
         // Initialize bloom renderer
         bloomRenderer.initialize(WIDTH, HEIGHT, quadVAO);
+
+        // Initialize GUI manager
+        guiManager.initialize(window, "#version 430");
+        Logger::info("GUI Manager initialized");
     }
     void generateGrid(const vector<ObjectData>& objects) {
         const int gridSize = 25;
@@ -861,6 +868,24 @@ int main() {
         glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
         engine.dispatchCompute(camera);
         engine.drawFullScreenQuad();
+
+        // ---------- RENDER GUI ------------- //
+        double fps = perfMonitor.getFPS();
+
+        // Create GUI state with pointers to relevant data
+        GUIState guiState;
+        guiState.kerrSpin = &engine.kerrSpin;
+        guiState.useKerr = &engine.useKerr;
+        guiState.exposure = &engine.exposure;
+        guiState.visualizationMode = &engine.visualizationMode;
+        guiState.wavelengthBand = &engine.wavelengthBand;
+        guiState.cameraRadius = &camera.radius;
+        guiState.cameraAzimuth = &camera.azimuth;
+        guiState.cameraElevation = &camera.elevation;
+        guiState.windowWidth = &engine.WIDTH;
+        guiState.windowHeight = &engine.HEIGHT;
+
+        engine.guiManager.render(guiState, deltaTime, fps);
 
         // 6) present to screen
         glfwSwapBuffers(engine.window);
