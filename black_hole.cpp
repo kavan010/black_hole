@@ -154,7 +154,9 @@ struct Engine {
     GLFWwindow* window;
     GLuint quadVAO;
     GLuint texture;
+    GLuint hdrTexture;  // HDR floating-point texture
     GLuint shaderProgram;
+    GLuint tonemapProgram;  // Tone mapping shader
     GLuint computeProgram = 0;
     // -- UBOs -- //
     GLuint cameraUBO = 0;
@@ -165,6 +167,8 @@ struct Engine {
     GLuint gridVBO = 0;
     GLuint gridEBO = 0;
     int gridIndexCount = 0;
+    // -- HDR vars -- //
+    float exposure = 1.0f;
 
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
@@ -200,6 +204,7 @@ struct Engine {
         cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
         this->shaderProgram = CreateShaderProgram();
         gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
+        tonemapProgram = CreateTonemapProgram();
 
         computeProgram = CreateComputeProgram("geodesic.comp");
         glGenBuffers(1, &cameraUBO);
@@ -224,7 +229,8 @@ struct Engine {
 
         auto result = QuadVAO();
         this->quadVAO = result[0];
-        this->texture = result[1];
+        this->hdrTexture = result[1];  // Use HDR texture
+        this->texture = result[1];     // Keep for compatibility
     }
     void generateGrid(const vector<ObjectData>& objects) {
         const int gridSize = 25;
@@ -313,12 +319,13 @@ struct Engine {
         glEnable(GL_DEPTH_TEST);
     }
     void drawFullScreenQuad() {
-        glUseProgram(shaderProgram); // fragment + vertex shader
+        glUseProgram(tonemapProgram); // Use tone mapping shader
         glBindVertexArray(quadVAO);
 
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glUniform1i(glGetUniformLocation(shaderProgram, "screenTexture"), 0);
+        glBindTexture(GL_TEXTURE_2D, hdrTexture);
+        glUniform1i(glGetUniformLocation(tonemapProgram, "hdrTexture"), 0);
+        glUniform1f(glGetUniformLocation(tonemapProgram, "exposure"), exposure);
 
         glDisable(GL_DEPTH_TEST);  // draw as background
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 6);  // 2 triangles
@@ -461,20 +468,93 @@ struct Engine {
         glDeleteShader(cs);
         return prog;
     }
+    GLuint CreateTonemapProgram() {
+        const char* vertexShaderSource = R"(
+        #version 330 core
+        layout (location = 0) in vec2 aPos;
+        layout (location = 1) in vec2 aTexCoord;
+        out vec2 TexCoord;
+        void main() {
+            gl_Position = vec4(aPos, 0.0, 1.0);
+            TexCoord = aTexCoord;
+        })";
+
+        // Load fragment shader from file
+        std::ifstream in("tonemap.frag");
+        if (!in.is_open()) {
+            std::cerr << "Failed to open tonemap.frag\n";
+            exit(EXIT_FAILURE);
+        }
+        std::stringstream ss;
+        ss << in.rdbuf();
+        std::string fragStr = ss.str();
+        const char* fragmentShaderSource = fragStr.c_str();
+
+        // Vertex shader
+        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
+        glCompileShader(vertexShader);
+
+        GLint success;
+        glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            GLint logLen;
+            glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH, &logLen);
+            std::vector<char> log(logLen);
+            glGetShaderInfoLog(vertexShader, logLen, nullptr, log.data());
+            std::cerr << "Vertex shader compile error:\n" << log.data() << "\n";
+            exit(EXIT_FAILURE);
+        }
+
+        // Fragment shader
+        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
+        glCompileShader(fragmentShader);
+
+        glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            GLint logLen;
+            glGetShaderiv(fragmentShader, GL_INFO_LOG_LENGTH, &logLen);
+            std::vector<char> log(logLen);
+            glGetShaderInfoLog(fragmentShader, logLen, nullptr, log.data());
+            std::cerr << "Fragment shader compile error (tonemap.frag):\n" << log.data() << "\n";
+            exit(EXIT_FAILURE);
+        }
+
+        GLuint program = glCreateProgram();
+        glAttachShader(program, vertexShader);
+        glAttachShader(program, fragmentShader);
+        glLinkProgram(program);
+
+        glGetProgramiv(program, GL_LINK_STATUS, &success);
+        if (!success) {
+            GLint logLen;
+            glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
+            std::vector<char> log(logLen);
+            glGetProgramInfoLog(program, logLen, nullptr, log.data());
+            std::cerr << "Tonemap shader link error:\n" << log.data() << "\n";
+            exit(EXIT_FAILURE);
+        }
+
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+
+        return program;
+    }
     void dispatchCompute(const Camera& cam) {
         // determine target compute‐res
         int cw = cam.moving ? COMPUTE_WIDTH  : 200;
         int ch = cam.moving ? COMPUTE_HEIGHT : 150;
 
-        // 1) reallocate the texture if needed
-        glBindTexture(GL_TEXTURE_2D, texture);
+        // 1) reallocate the HDR texture if needed
+        glBindTexture(GL_TEXTURE_2D, hdrTexture);
         glTexImage2D(GL_TEXTURE_2D,
                     0,                // mip
-                    GL_RGBA8,         // internal format
+                    GL_RGBA16F,       // HDR internal format
                     cw,               // width
                     ch,               // height
-                    0, GL_RGBA, 
-                    GL_UNSIGNED_BYTE, 
+                    0, GL_RGBA,
+                    GL_FLOAT,         // Use float data type
                     nullptr);
 
         // 2) bind compute program & UBOs
@@ -484,7 +564,7 @@ struct Engine {
         uploadObjectsUBO(objects);
 
         // 3) bind it as image unit 0
-        glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+        glBindImageTexture(0, hdrTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
         // 4) dispatch grid
         GLuint groupsX = (GLuint)std::ceil(cw / 16.0f);
@@ -585,15 +665,14 @@ struct Engine {
         glBindTexture(GL_TEXTURE_2D, texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glBindTexture(GL_TEXTURE_2D, texture);
         glTexImage2D(GL_TEXTURE_2D,
                     0,             // mip
-                    GL_RGBA8,      // internal format
+                    GL_RGBA16F,    // HDR internal format
                     COMPUTE_WIDTH,
                     COMPUTE_HEIGHT,
                     0,
                     GL_RGBA,
-                    GL_UNSIGNED_BYTE,
+                    GL_FLOAT,      // Float data type for HDR
                     nullptr);
         vector<GLuint> VAOtexture = {VAO, texture};
         return VAOtexture;
@@ -632,6 +711,20 @@ void setupCameraCallbacks(GLFWwindow* window) {
     glfwSetKeyCallback(window, [](GLFWwindow* win, int key, int scancode, int action, int mods) {
         Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
         cam->processKey(key, scancode, action, mods);
+
+        // Exposure controls
+        if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+            if (key == GLFW_KEY_E) {
+                engine.exposure += 0.1f;
+                cout << "[INFO] Exposure: " << engine.exposure << endl;
+            } else if (key == GLFW_KEY_Q) {
+                engine.exposure = std::max(0.1f, engine.exposure - 0.1f);
+                cout << "[INFO] Exposure: " << engine.exposure << endl;
+            } else if (key == GLFW_KEY_R) {
+                engine.exposure = 1.0f;
+                cout << "[INFO] Exposure reset to 1.0" << endl;
+            }
+        }
     });
 }
 
