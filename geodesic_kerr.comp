@@ -232,7 +232,11 @@ void geodesicRHSSchwarzschild(Ray ray, out vec3 d1, out vec3 d2) {
          + (SagA_rs / (2.0 * r*r * f)) * dr * dr
          + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
-    d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
+
+    // Prevent division by zero at poles (theta = 0 or π)
+    float sinTheta = sin(theta);
+    float cotTheta = (abs(sinTheta) > 1e-6) ? cos(theta) / sinTheta : 0.0;
+    d2.z = -2.0*dr*dphi/r - 2.0*cotTheta * dtheta * dphi;
 }
 
 /**

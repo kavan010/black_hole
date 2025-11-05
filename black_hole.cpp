@@ -92,7 +92,7 @@ struct Camera {
     void update() {
         // Always keep target at black hole center
         target = vec3(0.0f, 0.0f, 0.0f);
-        if(dragging | panning) {
+        if(dragging || panning) {
             moving = true;
         } else {
             moving = false;
