@@ -3,6 +3,7 @@
 
 #include <GLFW/glfw3.h>
 #include <string>
+#include "../config/preset_manager.hpp"
 
 // GUI数据结构 - 简化的接口，避免循环依赖
 struct GUIState {
@@ -127,6 +128,10 @@ private:
     float fpsHistory[PERF_HISTORY_SIZE] = {};
     float frameTimeHistory[PERF_HISTORY_SIZE] = {};
     int perfHistoryOffset = 0;
+
+    // 预设管理器
+    PresetManager presetManager;
+    int selectedPresetIndex = 0;
 };
 
 #endif // GUI_MANAGER_HPP

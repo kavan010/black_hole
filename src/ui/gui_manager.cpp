@@ -6,6 +6,35 @@
 #include <iostream>
 #include <cmath>
 
+// Implementation of PresetManager methods that depend on GUIState
+void PresetManager::applyPresetToGUIState(const Preset& preset, GUIState& guiState) {
+    if (guiState.kerrSpin) *guiState.kerrSpin = preset.kerrSpin;
+    if (guiState.useKerr) *guiState.useKerr = preset.useKerr;
+    if (guiState.exposure) *guiState.exposure = preset.exposure;
+    if (guiState.visualizationMode) *guiState.visualizationMode = preset.visualizationMode;
+    if (guiState.wavelengthBand) *guiState.wavelengthBand = preset.wavelengthBand;
+    if (guiState.cameraRadius) *guiState.cameraRadius = preset.cameraRadius;
+    if (guiState.cameraAzimuth) *guiState.cameraAzimuth = preset.cameraAzimuth;
+    if (guiState.cameraElevation) *guiState.cameraElevation = preset.cameraElevation;
+}
+
+Preset PresetManager::createPresetFromGUIState(const GUIState& guiState, const std::string& name, const std::string& description) {
+    Preset preset;
+    preset.name = name;
+    preset.description = description;
+
+    if (guiState.kerrSpin) preset.kerrSpin = *guiState.kerrSpin;
+    if (guiState.useKerr) preset.useKerr = *guiState.useKerr;
+    if (guiState.exposure) preset.exposure = *guiState.exposure;
+    if (guiState.visualizationMode) preset.visualizationMode = *guiState.visualizationMode;
+    if (guiState.wavelengthBand) preset.wavelengthBand = *guiState.wavelengthBand;
+    if (guiState.cameraRadius) preset.cameraRadius = *guiState.cameraRadius;
+    if (guiState.cameraAzimuth) preset.cameraAzimuth = *guiState.cameraAzimuth;
+    if (guiState.cameraElevation) preset.cameraElevation = *guiState.cameraElevation;
+
+    return preset;
+}
+
 GUIManager::GUIManager() {
 }
 
@@ -328,9 +357,120 @@ void GUIManager::renderHUD(GUIState& guiState) {
 }
 
 void GUIManager::renderPresetsPanel(GUIState& guiState) {
-    // Will be implemented in Phase 7.3
     ImGui::Begin("Presets", &showPresetsPanel);
-    ImGui::Text("Preset system coming in Phase 7.3");
+
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Scene Presets");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Get preset list
+    const auto& presets = presetManager.getPresets();
+
+    // Preset selection listbox
+    ImGui::Text("Available Presets:");
+    ImGui::PushItemWidth(-1);  // Full width
+
+    if (ImGui::BeginListBox("##presetlist", ImVec2(-1, 200))) {
+        for (size_t i = 0; i < presets.size(); i++) {
+            const bool isSelected = (selectedPresetIndex == static_cast<int>(i));
+            if (ImGui::Selectable(presets[i].name.c_str(), isSelected)) {
+                selectedPresetIndex = static_cast<int>(i);
+            }
+
+            // Show tooltip with description
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", presets[i].description.c_str());
+            }
+
+            if (isSelected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndListBox();
+    }
+
+    ImGui::PopItemWidth();
+    ImGui::Spacing();
+
+    // Show details of selected preset
+    if (selectedPresetIndex >= 0 && selectedPresetIndex < static_cast<int>(presets.size())) {
+        const Preset& preset = presets[selectedPresetIndex];
+
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "%s", preset.name.c_str());
+        ImGui::TextWrapped("%s", preset.description.c_str());
+        ImGui::Spacing();
+
+        // Show preset parameters
+        ImGui::Text("Parameters:");
+        ImGui::BulletText("Kerr Spin: %.3f", preset.kerrSpin);
+        ImGui::BulletText("Metric: %s", preset.useKerr ? "Kerr (Rotating)" : "Schwarzschild");
+        ImGui::BulletText("Exposure: %.2f", preset.exposure);
+
+        const char* modes[] = {"Normal", "Redshift", "Steps", "Energy", "Carter"};
+        ImGui::BulletText("Visualization: %s", modes[preset.visualizationMode]);
+
+        const char* bands[] = {"Radio", "Infrared", "Optical", "X-Ray", "Multi"};
+        ImGui::BulletText("Wavelength: %s", bands[preset.wavelengthBand]);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // Apply button
+        if (ImGui::Button("Load This Preset", ImVec2(-1, 40))) {
+            presetManager.applyPresetToGUIState(preset, guiState);
+            std::cout << "[Presets] Loaded preset: " << preset.name << "\n";
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Apply this preset to the simulation");
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    // Save current settings as preset
+    ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Save Current Settings");
+
+    static char presetName[128] = "My Preset";
+    static char presetDesc[256] = "Custom preset description";
+
+    ImGui::Text("Preset Name:");
+    ImGui::InputText("##presetname", presetName, sizeof(presetName));
+
+    ImGui::Text("Description:");
+    ImGui::InputTextMultiline("##presetdesc", presetDesc, sizeof(presetDesc), ImVec2(-1, 60));
+
+    if (ImGui::Button("Save as New Preset", ImVec2(-1, 30))) {
+        Preset newPreset = presetManager.createPresetFromGUIState(guiState, presetName, presetDesc);
+        presetManager.addPreset(newPreset);
+        std::cout << "[Presets] Saved new preset: " << newPreset.name << "\n";
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Save current simulation settings as a new preset");
+    }
+
+    ImGui::Spacing();
+
+    // Export/Import buttons
+    ImGui::Separator();
+    ImGui::Text("Import/Export:");
+
+    if (ImGui::Button("Export Current to File", ImVec2(-1, 0))) {
+        Preset currentPreset = presetManager.createPresetFromGUIState(guiState, "Current", "Exported preset");
+        if (presetManager.savePreset(currentPreset, "preset_export.txt")) {
+            std::cout << "[Presets] Exported to preset_export.txt\n";
+        }
+    }
+
+    if (ImGui::Button("Import from File", ImVec2(-1, 0))) {
+        Preset imported;
+        if (presetManager.loadPreset("preset_export.txt", imported)) {
+            presetManager.addPreset(imported);
+            std::cout << "[Presets] Imported preset: " << imported.name << "\n";
+        }
+    }
+
     ImGui::End();
 }
 
