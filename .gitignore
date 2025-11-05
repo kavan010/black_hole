@@ -145,3 +145,12 @@ _deps
 
 # Vcpkg
 vcpkg_installed
+
+# Test outputs and logs
+*.log
+test_results.log
+cmake_output.log
+build_output.log
+
+# Temporary test scripts
+quick_test.sh
