@@ -13,6 +13,7 @@
 #include <chrono>
 #include <fstream>
 #include <sstream>
+#include <ctime>
 #include "src/utils/logger.hpp"
 #include "src/utils/performance_monitor.hpp"
 #include "src/utils/ray_path_exporter.hpp"
@@ -61,6 +62,33 @@ struct Camera {
             radius * sin(clampedElevation) * sin(azimuth)
         );
     }
+
+    // Get ray direction for screen coordinates (normalized device coordinates)
+    // screenX, screenY in range [0, windowWidth] x [0, windowHeight]
+    vec3 getRayDirection(double screenX, double screenY, int windowWidth, int windowHeight) const {
+        // Convert to NDC: [-1, 1] x [-1, 1]
+        float ndcX = (2.0f * screenX) / windowWidth - 1.0f;
+        float ndcY = 1.0f - (2.0f * screenY) / windowHeight; // Flip Y
+
+        // Camera basis vectors
+        vec3 fwd = normalize(target - position());
+        vec3 worldUp = vec3(0, 1, 0);
+        vec3 right = normalize(cross(fwd, worldUp));
+        vec3 up = cross(right, fwd);
+
+        // Field of view
+        float tanHalfFov = tan(glm::radians(60.0f * 0.5f));
+        float aspect = float(windowWidth) / float(windowHeight);
+
+        // Ray direction in camera space
+        vec3 rayDir = normalize(
+            fwd +
+            right * ndcX * aspect * tanHalfFov +
+            up * ndcY * tanHalfFov
+        );
+
+        return rayDir;
+    }
     void update() {
         // Always keep target at black hole center
         target = vec3(0.0f, 0.0f, 0.0f);
@@ -93,10 +121,27 @@ struct Camera {
     void processMouseButton(int button, int action, int mods, GLFWwindow* win) {
         if (button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_MIDDLE) {
             if (action == GLFW_PRESS) {
-                dragging = true;
-                // Disable panning so camera always orbits center
-                panning = false;
-                glfwGetCursorPos(win, &lastX, &lastY);
+                // Shift + Left Click: Export ray at cursor position
+                if (mods & GLFW_MOD_SHIFT) {
+                    double mouseX, mouseY;
+                    glfwGetCursorPos(win, &mouseX, &mouseY);
+                    int winWidth, winHeight;
+                    glfwGetWindowSize(win, &winWidth, &winHeight);
+
+                    vec3 rayDir = getRayDirection(mouseX, mouseY, winWidth, winHeight);
+                    vec3 camPos = position();
+
+                    RayPathExporter exporter;
+                    std::stringstream filename;
+                    filename << "ray_click_" << std::time(nullptr) << ".csv";
+                    exporter.exportPath(camPos, rayDir, filename.str());
+                    Logger::info("Exported ray at (", (int)mouseX, ", ", (int)mouseY, ") to ", filename.str());
+                } else {
+                    dragging = true;
+                    // Disable panning so camera always orbits center
+                    panning = false;
+                    glfwGetCursorPos(win, &lastX, &lastY);
+                }
             } else if (action == GLFW_RELEASE) {
                 dragging = false;
                 panning = false;
@@ -218,6 +263,8 @@ struct Engine {
     // -- Kerr parameters -- //
     float kerrSpin = 0.0f;    // 0 = Schwarzschild, 1 = maximal rotation
     bool useKerr = false;      // Toggle between Schwarzschild and Kerr metrics
+    // -- Visualization mode -- //
+    int visualizationMode = 0; // 0 = Normal, 1 = Redshift, 2 = Step count, 3 = Energy, 4 = Carter constant
 
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
@@ -544,15 +591,15 @@ struct Engine {
     }
     void uploadKerrUBO() {
         struct KerrData {
-            float spin;      // 0 to 1
-            float useKerr;   // 0.0 or 1.0 (bool as float for std140)
-            float _pad5;
+            float spin;              // 0 to 1
+            float useKerr;           // 0.0 or 1.0 (bool as float for std140)
+            float visualizationMode; // 0-3 visualization modes
             float _pad6;
         } data;
 
         data.spin = kerrSpin;
         data.useKerr = useKerr ? 1.0f : 0.0f;
-        data._pad5 = 0.0f;
+        data.visualizationMode = float(visualizationMode);
         data._pad6 = 0.0f;
 
         glBindBuffer(GL_UNIFORM_BUFFER, kerrUBO);
@@ -694,6 +741,13 @@ void setupCameraCallbacks(GLFWwindow* window) {
                 engine.kerrSpin = std::min(1.0f, engine.kerrSpin + 0.1f);
                 Logger::info("Kerr spin: ", engine.kerrSpin);
             }
+        }
+
+        // Visualization mode controls
+        if (action == GLFW_PRESS && key == GLFW_KEY_V) {
+            engine.visualizationMode = (engine.visualizationMode + 1) % 5;
+            const char* modes[] = {"Normal", "Gravitational Redshift", "Integration Steps", "Energy Conservation", "Carter Constant"};
+            Logger::info("Visualization mode: ", modes[engine.visualizationMode]);
         }
     });
 }

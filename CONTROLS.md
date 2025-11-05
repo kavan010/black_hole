@@ -54,6 +54,28 @@
   - Exports 11 rays in a cone around camera direction
   - Output: `ray_cone.csv` (ray_id, coordinates)
   - Useful for 3D visualization of geodesics
+- **Shift + Left Click**: Export ray at cursor position (NEW!)
+  - Click anywhere on screen to export that specific geodesic
+  - Output: `ray_click_<timestamp>.csv`
+  - Perfect for analyzing specific features (Einstein rings, photon sphere)
+
+#### Visualization Modes (NEW in Phase 5!)
+- **V**: Cycle through visualization modes
+  - **Mode 0 - Normal**: Photorealistic rendering with Shakura-Sunyaev disk model
+  - **Mode 1 - Gravitational Redshift**: Color-coded by redshift factor
+    * Blue = weak redshift (far from black hole)
+    * Yellow-Orange = moderate redshift
+    * Red = extreme redshift (near photon sphere)
+  - **Mode 2 - Integration Steps**: Shows computational complexity
+    * Blue = few steps (quick rays)
+    * Red = many steps (complex orbits)
+  - **Mode 3 - Energy Conservation**: Validates numerical integrator
+    * Green = perfect conservation (RK4 working correctly)
+    * Yellow = acceptable
+    * Red = poor (integration issues)
+  - **Mode 4 - Carter Constant**: Monitors Kerr metric conservation
+    * Green = well-conserved (accurate geodesics)
+    * Orange-Red = drifting (simplified equations)
 
 ## Visual Features
 

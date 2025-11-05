@@ -66,9 +66,9 @@ layout(std140, binding = 3) uniform Objects {
 };
 
 layout(std140, binding = 4) uniform KerrParams {
-    float spin;          // Spin parameter: 0 = Schwarzschild, 1 = maximal
-    bool useKerr;        // Switch between Schwarzschild and Kerr
-    float _pad5;
+    float spin;              // Spin parameter: 0 = Schwarzschild, 1 = maximal
+    bool useKerr;            // Switch between Schwarzschild and Kerr
+    float visualizationMode; // 0=Normal, 1=Redshift, 2=Steps, 3=Energy
     float _pad6;
 } kerrParams;
 
@@ -278,6 +278,90 @@ bool crossesEquatorialPlane(vec3 oldPos, vec3 newPos) {
     return crossed && (r >= disk_r1 && r <= disk_r2);
 }
 
+/**
+ * Calculate gravitational redshift factor
+ * z = 1/sqrt(1 - rs/r) - 1
+ * Higher z = stronger redshift (deeper in gravity well)
+ */
+float gravitationalRedshift(float r) {
+    float f = 1.0 - SagA_rs / r;
+    if (f <= 0.0) return 100.0; // Inside event horizon
+    return 1.0 / sqrt(f) - 1.0;
+}
+
+/**
+ * Shakura-Sunyaev accretion disk model
+ * Temperature: T(r) ∝ r^(-3/4)
+ * Luminosity: L(r) ∝ T^4
+ * Returns (temperature_normalized, doppler_boost, redshift_factor)
+ */
+vec3 shakuraSunyaev(float r, float phi, vec3 rayDir) {
+    // Normalized temperature (peak at inner edge)
+    float r_norm = (r - disk_r1) / (disk_r2 - disk_r1);
+    float temperature = pow(1.0 / (r / disk_r1), 0.75); // T ∝ r^(-3/4)
+
+    // Doppler boost from rotating disk
+    // Assuming Keplerian rotation: v_phi = sqrt(GM/r)
+    float v_orbital = sqrt(SagA_rs * c * c / (2.0 * r)); // Keplerian velocity
+    float v_tangent = v_orbital / c; // Fraction of speed of light
+
+    // Disk rotates counterclockwise (when viewed from +Y)
+    vec3 diskVelocity = vec3(-sin(phi), 0.0, cos(phi)) * v_tangent;
+
+    // Doppler factor: 1 / gamma(1 - v·n/c)
+    float vdotn = dot(diskVelocity, normalize(rayDir));
+    float gamma = 1.0 / sqrt(1.0 - v_tangent * v_tangent);
+    float dopplerBoost = 1.0 / (gamma * (1.0 - vdotn));
+
+    // Gravitational redshift
+    float redshiftFactor = sqrt(1.0 - SagA_rs / r);
+
+    return vec3(temperature, dopplerBoost, redshiftFactor);
+}
+
+/**
+ * Convert temperature to blackbody color (simplified)
+ * Low T: Red-orange
+ * Mid T: Yellow-white
+ * High T: Blue-white
+ */
+vec3 blackbodyColor(float temperature) {
+    // Normalized temperature [0, 1]
+    float t = clamp(temperature, 0.0, 1.0);
+
+    if (t < 0.33) {
+        // Red → Orange
+        return mix(vec3(1.0, 0.2, 0.0), vec3(1.0, 0.5, 0.1), t / 0.33);
+    } else if (t < 0.66) {
+        // Orange → Yellow-White
+        return mix(vec3(1.0, 0.5, 0.1), vec3(1.0, 0.9, 0.7), (t - 0.33) / 0.33);
+    } else {
+        // Yellow-White → Blue-White
+        return mix(vec3(1.0, 0.9, 0.7), vec3(0.7, 0.8, 1.0), (t - 0.66) / 0.34);
+    }
+}
+
+/**
+ * Map redshift value to color
+ * Blue = weak redshift (far from BH)
+ * Red = strong redshift (close to BH)
+ */
+vec3 redshiftToColor(float z) {
+    // Clamp to reasonable range [0, 10]
+    float t = clamp(z / 10.0, 0.0, 1.0);
+
+    // Blue → Cyan → Green → Yellow → Red
+    if (t < 0.25) {
+        return mix(vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 1.0), t * 4.0);
+    } else if (t < 0.5) {
+        return mix(vec3(0.0, 1.0, 1.0), vec3(0.0, 1.0, 0.0), (t - 0.25) * 4.0);
+    } else if (t < 0.75) {
+        return mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 1.0, 0.0), (t - 0.5) * 4.0);
+    } else {
+        return mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), (t - 0.75) * 4.0);
+    }
+}
+
 void main() {
     // Get actual texture dimensions from output image
     ivec2 texSize = imageSize(outImage);
@@ -301,30 +385,50 @@ void main() {
     bool hitObject    = false;
 
     int steps = cam.moving ? 60000 : 60000;
+    int actualSteps = 0;
+    float initialEnergy = ray.E;
+    float initialCarter = ray.Q;
+    float hitRadius = 0.0; // Store radius where ray hits something
 
     for (int i = 0; i < steps; ++i) {
-        if (intercept(ray, SagA_rs)) { hitBlackHole = true; break; }
+        actualSteps++;
+        if (intercept(ray, SagA_rs)) { hitBlackHole = true; hitRadius = ray.r; break; }
         rk4Step(ray, D_LAMBDA);
 
         vec3 newPos = vec3(ray.x, ray.y, ray.z);
-        if (crossesEquatorialPlane(prevPos, newPos)) { hitDisk = true; break; }
-        if (interceptObject(ray)) { hitObject = true; break; }
+        if (crossesEquatorialPlane(prevPos, newPos)) { hitDisk = true; hitRadius = ray.r; break; }
+        if (interceptObject(ray)) { hitObject = true; hitRadius = ray.r; break; }
         prevPos = newPos;
         if (ray.r > ESCAPE_R) break;
     }
 
     if (hitDisk) {
-        double r = length(vec3(ray.x, ray.y, ray.z)) / disk_r2;
-        float temperature = 1.0 - r;
-        vec3 diskColor = mix(
-            vec3(1.0, 0.3, 0.1),
-            vec3(0.5, 0.8, 1.2),
-            temperature
-        );
-        // Kerr disks are brighter due to frame dragging
-        float intensity = mix(3.0, 10.0, temperature) * (1.0 + kerrParams.spin * 0.5);
-        diskColor *= intensity;
-        color = vec4(diskColor, 1.0);
+        // Use Shakura-Sunyaev disk model for realistic rendering
+        float r = length(vec3(ray.x, ray.y, ray.z));
+        float phi = atan(ray.z, ray.x); // Azimuthal angle
+
+        // Get disk physics
+        vec3 diskPhysics = shakuraSunyaev(r, phi, dir);
+        float temperature = diskPhysics.x;
+        float dopplerBoost = diskPhysics.y;
+        float redshiftFactor = diskPhysics.z;
+
+        // Blackbody color from temperature
+        vec3 diskColor = blackbodyColor(temperature);
+
+        // Luminosity ∝ T^4 (Stefan-Boltzmann law)
+        float luminosity = pow(temperature, 4.0);
+
+        // Apply relativistic effects
+        float totalBoost = dopplerBoost * redshiftFactor;
+
+        // Kerr disks have additional brightness from frame dragging
+        float kerrBoost = 1.0 + kerrParams.spin * 0.3;
+
+        // Final intensity
+        float intensity = luminosity * totalBoost * kerrBoost * 5.0;
+
+        color = vec4(diskColor * intensity, 1.0);
 
     } else if (hitBlackHole) {
         color = vec4(0.0, 0.0, 0.0, 1.0);
@@ -349,6 +453,72 @@ void main() {
     } else {
         color = vec4(0.0);
     }
+
+    // Apply visualization modes
+    int vizMode = int(kerrParams.visualizationMode);
+
+    if (vizMode == 1) {
+        // Gravitational redshift visualization
+        if (hitDisk || hitObject) {
+            float z = gravitationalRedshift(hitRadius);
+            vec3 redshiftColor = redshiftToColor(z);
+            color = vec4(redshiftColor * 5.0, 1.0); // Boost brightness for visibility
+        } else if (hitBlackHole) {
+            color = vec4(1.0, 0.0, 0.0, 1.0); // Extreme redshift (red)
+        }
+    } else if (vizMode == 2) {
+        // Integration steps visualization
+        float stepRatio = float(actualSteps) / float(steps);
+        // Blue = few steps, Red = many steps
+        vec3 stepColor = mix(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), stepRatio);
+        if (hitDisk || hitObject || hitBlackHole) {
+            color = vec4(stepColor * 5.0, 1.0);
+        }
+    } else if (vizMode == 3) {
+        // Energy conservation visualization
+        if (hitDisk || hitObject) {
+            float energyError = abs(ray.E - initialEnergy) / initialEnergy;
+            // Green = good conservation, Red = poor conservation
+            vec3 errorColor;
+            if (energyError < 1e-8) {
+                errorColor = vec3(0.0, 1.0, 0.0); // Perfect (green)
+            } else if (energyError < 1e-6) {
+                errorColor = vec3(0.5, 1.0, 0.0); // Good (yellow-green)
+            } else if (energyError < 1e-4) {
+                errorColor = vec3(1.0, 1.0, 0.0); // Fair (yellow)
+            } else {
+                errorColor = vec3(1.0, 0.0, 0.0); // Poor (red)
+            }
+            color = vec4(errorColor * 5.0, 1.0);
+        }
+    } else if (vizMode == 4) {
+        // Carter constant (Q) conservation visualization
+        if (hitDisk || hitObject) {
+            // For near-zero Q (equatorial orbits), check absolute error
+            float carterError;
+            if (abs(initialCarter) < 1e-6) {
+                carterError = abs(ray.Q - initialCarter);
+            } else {
+                carterError = abs(ray.Q - initialCarter) / abs(initialCarter);
+            }
+
+            // Color code based on error magnitude
+            vec3 errorColor;
+            if (carterError < 1e-8) {
+                errorColor = vec3(0.0, 1.0, 0.0); // Perfect (green)
+            } else if (carterError < 1e-6) {
+                errorColor = vec3(0.5, 1.0, 0.5); // Good (light green)
+            } else if (carterError < 1e-4) {
+                errorColor = vec3(1.0, 1.0, 0.0); // Fair (yellow)
+            } else if (carterError < 1e-2) {
+                errorColor = vec3(1.0, 0.5, 0.0); // Poor (orange)
+            } else {
+                errorColor = vec3(1.0, 0.0, 0.0); // Very poor (red)
+            }
+            color = vec4(errorColor * 5.0, 1.0);
+        }
+    }
+    // vizMode == 0: Normal rendering (no changes)
 
     imageStore(outImage, pix, color);
 }

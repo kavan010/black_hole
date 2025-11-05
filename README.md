@@ -42,7 +42,9 @@ Real-time gravitational lensing and black hole visualization using GPU-accelerat
 - **G**: Toggle Newtonian gravity simulation
 - **K**: Toggle Kerr metric (rotating black hole)
 - **B**: Toggle bloom post-processing
+- **V**: Cycle visualization modes (Normal/Redshift/Steps/Energy/Carter)
 - **P/C**: Export ray path/cone pattern to CSV
+- **Shift + Click**: Export ray at cursor position
 
 For complete controls and features, see **[CONTROLS.md](CONTROLS.md)**
 
@@ -97,6 +99,30 @@ https://www.youtube.com/watch?v=8-B6ryuBkCM
   - CSV format compatible with Python/MATLAB
 
 See [PHASE4_FEATURES.md](PHASE4_FEATURES.md) for technical documentation.
+
+### Phase 5: Scientific Platform (LATEST!)
+- ✅ **Interactive Ray Selection**: Click anywhere to export geodesic
+  - Shift + Left Click to export ray at cursor
+  - Timestamped CSV files for each click
+  - Perfect for analyzing Einstein rings and photon sphere
+- ✅ **Visualization Modes**: 5 scientific visualization modes
+  - Mode 0: Normal (Shakura-Sunyaev disk)
+  - Mode 1: Gravitational Redshift (blue→red color mapping)
+  - Mode 2: Integration Steps (computational complexity)
+  - Mode 3: Energy Conservation (integrator validation)
+  - Mode 4: Carter Constant (Kerr metric conservation)
+- ✅ **Shakura-Sunyaev Accretion Disk**: Realistic disk physics
+  - Temperature T ∝ r⁻³/⁴ distribution
+  - Stefan-Boltzmann luminosity L ∝ T⁴
+  - Relativistic Doppler beaming from rotation
+  - Gravitational redshift effects
+  - Blackbody color temperature mapping
+- ✅ **Conservation Tracking**: Monitor physical quantities
+  - Energy (E) conservation visualization
+  - Carter constant (Q) tracking for Kerr metric
+  - Real-time validation of numerical integration
+
+See [PHASE5_FEATURES.md](PHASE5_FEATURES.md) for comprehensive scientific documentation.
 
 ## **Building Requirements:**
 
