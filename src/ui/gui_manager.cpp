@@ -326,7 +326,7 @@ void GUIManager::renderPerformancePanel(double deltaTime, double fps) {
 }
 
 void GUIManager::renderHUD(GUIState& guiState) {
-    // Simple HUD overlay at top-right corner
+    // Enhanced HUD overlay at top-right corner
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration |
                                      ImGuiWindowFlags_AlwaysAutoResize |
                                      ImGuiWindowFlags_NoSavedSettings |
@@ -343,15 +343,47 @@ void GUIManager::renderHUD(GUIState& guiState) {
     window_pos_pivot.x = 1.0f;
     window_pos_pivot.y = 0.0f;
     ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
-    ImGui::SetNextWindowBgAlpha(0.35f);
+    ImGui::SetNextWindowBgAlpha(0.45f);
 
     if (ImGui::Begin("HUD", &showHUD, window_flags)) {
-        ImGui::Text("Black Hole Simulation");
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Black Hole Simulation");
         ImGui::Separator();
-        if (guiState.cameraRadius) {
-            ImGui::Text("Camera Distance: %.2e m", *guiState.cameraRadius);
+
+        // Black hole info
+        if (guiState.useKerr && guiState.kerrSpin) {
+            const char* bhType = *guiState.useKerr ? "Kerr (Rotating)" : "Schwarzschild";
+            ImGui::Text("Type: %s", bhType);
+            if (*guiState.useKerr) {
+                ImGui::Text("Spin: a = %.3f", *guiState.kerrSpin);
+            }
         }
-        // Add more HUD info as needed
+
+        ImGui::Separator();
+
+        // Camera info
+        if (guiState.cameraRadius) {
+            ImGui::Text("Distance: %.2e m", *guiState.cameraRadius);
+            // Calculate Schwarzschild radii
+            const float Rs = 1.269e10f;  // ~Sgr A* Schwarzschild radius
+            float rsRatio = *guiState.cameraRadius / Rs;
+            ImGui::Text("(%.1f Rs)", rsRatio);
+        }
+
+        ImGui::Separator();
+
+        // Rendering info
+        if (guiState.visualizationMode) {
+            const char* modes[] = {"Normal", "Redshift", "Steps", "Energy", "Carter"};
+            ImGui::Text("Mode: %s", modes[*guiState.visualizationMode]);
+        }
+
+        if (guiState.wavelengthBand) {
+            const char* bands[] = {"Radio", "IR", "Optical", "X-Ray", "Multi"};
+            ImGui::Text("Band: %s", bands[*guiState.wavelengthBand]);
+        }
+
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Press H to hide HUD");
     }
     ImGui::End();
 }
@@ -493,13 +525,95 @@ void GUIManager::renderAboutWindow() {
 }
 
 void GUIManager::renderWelcomeWindow() {
-    // Will be implemented in Phase 7.5 (FTUE)
-    ImGui::Begin("Welcome", &showWelcomeWindow);
-    ImGui::Text("Welcome to Black Hole Simulation!");
-    ImGui::Text("FTUE will be implemented in Phase 7.5");
-    if (ImGui::Button("Close")) {
+    // Center the window
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                     viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_Appearing);
+
+    ImGui::Begin("Welcome to Black Hole Simulation!", &showWelcomeWindow,
+                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+
+    // Title
+    ImGui::PushFont(ImGui::GetFont());  // Use default font for now
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Black Hole Simulation");
+    ImGui::PopFont();
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Real-time General Relativity Visualization");
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Introduction
+    ImGui::TextWrapped(
+        "Welcome! This simulation allows you to explore black holes using real physics "
+        "from Einstein's General Relativity. You can visualize both non-rotating "
+        "(Schwarzschild) and rotating (Kerr) black holes in real-time.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Quick Start Guide
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "Quick Start Guide:");
+    ImGui::Spacing();
+
+    ImGui::BulletText("Left Mouse Button: Rotate the camera around the black hole");
+    ImGui::BulletText("Right Mouse Button: Pan the view");
+    ImGui::BulletText("Mouse Wheel: Zoom in and out");
+    ImGui::Spacing();
+
+    ImGui::BulletText("Control Panel (left): Adjust black hole parameters");
+    ImGui::BulletText("Presets Panel: Try different famous black holes (M87*, Sgr A*)");
+    ImGui::BulletText("Performance Panel: Monitor FPS and frame time");
+    ImGui::Spacing();
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Key Features
+    ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Key Features:");
+    ImGui::Spacing();
+
+    ImGui::BulletText("Kerr Metric: Simulate rotating black holes");
+    ImGui::BulletText("Multiple Wavelengths: Radio, IR, Optical, X-Ray");
+    ImGui::BulletText("Scientific Visualization: Redshift, Energy conservation");
+    ImGui::BulletText("HDR Rendering: Realistic brightness and bloom effects");
+    ImGui::Spacing();
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Recommendations
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "Recommended First Steps:");
+    ImGui::Spacing();
+
+    ImGui::Text("1."); ImGui::SameLine();
+    ImGui::TextWrapped("Open the Presets panel and try 'M87* (EHT)' to see the famous black hole");
+
+    ImGui::Text("2."); ImGui::SameLine();
+    ImGui::TextWrapped("Toggle Kerr metric in the Control Panel and adjust the spin");
+
+    ImGui::Text("3."); ImGui::SameLine();
+    ImGui::TextWrapped("Try different Visualization Modes to see scientific data");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Close button
+    if (ImGui::Button("Got it! Let's explore", ImVec2(-1, 40))) {
         showWelcomeWindow = false;
     }
+
+    ImGui::Spacing();
+
+    static bool dontShowAgain = false;
+    ImGui::Checkbox("Don't show this again", &dontShowAgain);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("You can always access help from the Control Panel");
+    }
+
     ImGui::End();
 }
 
