@@ -13,6 +13,7 @@
 #include <chrono>
 #include <fstream>
 #include <sstream>
+#include "src/utils/logger.hpp"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -113,7 +114,7 @@ struct Camera {
     void processKey(int key, int scancode, int action, int mods) {
         if (action == GLFW_PRESS && key == GLFW_KEY_G) {
             Gravity = !Gravity;
-            cout << "[INFO] Gravity turned " << (Gravity ? "ON" : "OFF") << endl;
+            Logger::info("Gravity turned ", (Gravity ? "ON" : "OFF"));
         }
     }
 };
@@ -148,6 +149,43 @@ vector<ObjectData> objects = {
     //{ vec4(6e10f, 0.0f, 0.0f, 5e10f), vec4(0,1,0,1) }
 };
 
+// Grid cache to avoid regeneration every frame
+class GridCache {
+private:
+    std::vector<ObjectData> lastObjects;
+    bool isDirty = true;
+    const float POSITION_THRESHOLD = 1e8f;  // 100 million meters
+
+public:
+    bool needsRegeneration(const std::vector<ObjectData>& currentObjects) {
+        // Always regenerate if marked dirty or size changed
+        if (isDirty || lastObjects.size() != currentObjects.size()) {
+            return true;
+        }
+
+        // Check if any object moved significantly
+        for (size_t i = 0; i < currentObjects.size(); ++i) {
+            glm::vec3 lastPos = glm::vec3(lastObjects[i].posRadius);
+            glm::vec3 currPos = glm::vec3(currentObjects[i].posRadius);
+            float distance = glm::distance(lastPos, currPos);
+
+            if (distance > POSITION_THRESHOLD) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void markGenerated(const std::vector<ObjectData>& objects) {
+        lastObjects = objects;
+        isDirty = false;
+    }
+
+    void markDirty() {
+        isDirty = true;
+    }
+};
+
 struct Engine {
     GLuint gridShaderProgram;
     // -- Quad & Texture render -- //
@@ -167,13 +205,17 @@ struct Engine {
     GLuint gridVBO = 0;
     GLuint gridEBO = 0;
     int gridIndexCount = 0;
+    GridCache gridCache;  // Cache for grid regeneration
     // -- HDR vars -- //
     float exposure = 1.0f;
 
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
-    int COMPUTE_WIDTH  = 200;   // Compute resolution width
-    int COMPUTE_HEIGHT = 150;  // Compute resolution height
+    // Adaptive compute resolution based on camera movement
+    int COMPUTE_WIDTH_FULL    = 200;   // Full quality
+    int COMPUTE_HEIGHT_FULL   = 150;
+    int COMPUTE_WIDTH_MOVING  = 160;   // 80% quality while moving
+    int COMPUTE_HEIGHT_MOVING = 120;
     float width = 100000000000.0f; // Width of the viewport in meters
     float height = 75000000000.0f; // Height of the viewport in meters
     
@@ -201,7 +243,7 @@ struct Engine {
             glfwTerminate();
             exit(EXIT_FAILURE);
         }
-        cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
+        Logger::info("OpenGL ", glGetString(GL_VERSION));
         this->shaderProgram = CreateShaderProgram();
         gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
         tonemapProgram = CreateTonemapProgram();
@@ -542,9 +584,9 @@ struct Engine {
         return program;
     }
     void dispatchCompute(const Camera& cam) {
-        // determine target compute‐res
-        int cw = cam.moving ? COMPUTE_WIDTH  : 200;
-        int ch = cam.moving ? COMPUTE_HEIGHT : 150;
+        // Adaptive resolution: lower quality while moving for better FPS
+        int cw = cam.moving ? COMPUTE_WIDTH_MOVING : COMPUTE_WIDTH_FULL;
+        int ch = cam.moving ? COMPUTE_HEIGHT_MOVING : COMPUTE_HEIGHT_FULL;
 
         // 1) reallocate the HDR texture if needed
         glBindTexture(GL_TEXTURE_2D, hdrTexture);
@@ -668,8 +710,8 @@ struct Engine {
         glTexImage2D(GL_TEXTURE_2D,
                     0,             // mip
                     GL_RGBA16F,    // HDR internal format
-                    COMPUTE_WIDTH,
-                    COMPUTE_HEIGHT,
+                    COMPUTE_WIDTH_FULL,
+                    COMPUTE_HEIGHT_FULL,
                     0,
                     GL_RGBA,
                     GL_FLOAT,      // Float data type for HDR
@@ -716,13 +758,13 @@ void setupCameraCallbacks(GLFWwindow* window) {
         if (action == GLFW_PRESS || action == GLFW_REPEAT) {
             if (key == GLFW_KEY_E) {
                 engine.exposure += 0.1f;
-                cout << "[INFO] Exposure: " << engine.exposure << endl;
+                Logger::info("Exposure: ", engine.exposure);
             } else if (key == GLFW_KEY_Q) {
                 engine.exposure = std::max(0.1f, engine.exposure - 0.1f);
-                cout << "[INFO] Exposure: " << engine.exposure << endl;
+                Logger::info("Exposure: ", engine.exposure);
             } else if (key == GLFW_KEY_R) {
                 engine.exposure = 1.0f;
-                cout << "[INFO] Exposure reset to 1.0" << endl;
+                Logger::info("Exposure reset to 1.0");
             }
         }
     });
@@ -731,6 +773,10 @@ void setupCameraCallbacks(GLFWwindow* window) {
 
 // -- MAIN -- //
 int main() {
+    // Configure logging (INFO by default, DEBUG for verbose output)
+    Logger::setLevel(LogLevel::INFO);
+    Logger::setTimestamp(false);
+
     setupCameraCallbacks(engine.window);
     vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
@@ -770,7 +816,8 @@ int main() {
                             obj.posRadius.x += obj.velocity.x;
                             obj.posRadius.y += obj.velocity.y;
                             obj.posRadius.z += obj.velocity.z;
-                            cout << "velocity: " <<obj.velocity.x<<", " <<obj.velocity.y<<", " <<obj.velocity.z<<endl;
+                            // Velocity logging removed (was causing 360+ outputs/sec)
+                            // Use Logger::debug() if needed for debugging specific objects
                         }
                     }
             }
@@ -779,11 +826,16 @@ int main() {
 
 
         // ---------- GRID ------------- //
-        // 2) rebuild grid mesh on CPU
-        engine.generateGrid(objects);
-        // 5) overlay the bent grid
+        // Regenerate grid only when objects move significantly
+        if (engine.gridCache.needsRegeneration(objects)) {
+            engine.generateGrid(objects);
+            engine.gridCache.markGenerated(objects);
+            Logger::debug("Grid regenerated");
+        }
+
+        // Overlay the bent grid
         mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
-        mat4 proj = perspective(radians(60.0f), float(engine.COMPUTE_WIDTH)/engine.COMPUTE_HEIGHT, 1e9f, 1e14f);
+        mat4 proj = perspective(radians(60.0f), float(engine.WIDTH)/engine.HEIGHT, 1e9f, 1e14f);
         mat4 viewProj = proj * view;
         engine.drawGrid(viewProj);
 
