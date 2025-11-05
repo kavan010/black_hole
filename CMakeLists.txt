@@ -4,6 +4,21 @@ project(BlackHoleSim)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Platform-specific settings
+if(WIN32)
+    # Windows: Enable console for debugging, can be changed to WIN32 for release
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:CONSOLE")
+    add_definitions(-D_USE_MATH_DEFINES)
+elseif(APPLE)
+    # macOS: Set deployment target and framework paths
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version")
+    set(CMAKE_MACOSX_RPATH ON)
+elseif(UNIX)
+    # Linux: Enable pthreads
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+endif()
+
 # Dependencies
 find_package(GLEW REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -12,6 +27,12 @@ find_package(OpenGL REQUIRED)
 
 # Common dependencies
 set(DEPS glfw GLEW::GLEW glm::glm OpenGL::GL)
+
+# Add platform-specific dependencies
+if(UNIX AND NOT APPLE)
+    list(APPEND DEPS Threads::Threads)
+    list(APPEND DEPS ${CMAKE_DL_LIBS})
+endif()
 
 # 2D Lensing executable (archived but still buildable)
 add_executable(BlackHole2D archive/2D_lensing.cpp)

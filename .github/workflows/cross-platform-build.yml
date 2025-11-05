@@ -1,0 +1,127 @@
+name: Cross-Platform Build
+
+on:
+  push:
+    branches: [ main, master, claude/* ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+
+    - name: Install dependencies
+      run: |
+        vcpkg install glew:x64-windows glfw3:x64-windows glm:x64-windows
+
+    - name: Configure CMake
+      run: |
+        cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake -G "Visual Studio 17 2022" -A x64
+
+    - name: Build
+      run: |
+        cmake --build build --config Release
+
+    - name: Test executable exists
+      run: |
+        if (Test-Path build/Release/BlackHole3D.exe) {
+          Write-Host "✓ BlackHole3D.exe created successfully"
+        } else {
+          Write-Error "✗ BlackHole3D.exe not found"
+          exit 1
+        }
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: black-hole-windows
+        path: build/Release/BlackHole3D.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake libglew-dev libglfw3-dev libglm-dev libgl1-mesa-dev
+
+    - name: Configure CMake
+      run: |
+        cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: |
+        cmake --build build -- -j$(nproc)
+
+    - name: Test executable exists
+      run: |
+        if [ -f build/BlackHole3D ]; then
+          echo "✓ BlackHole3D created successfully"
+        else
+          echo "✗ BlackHole3D not found"
+          exit 1
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: black-hole-linux
+        path: build/BlackHole3D
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        brew install cmake glew glfw glm
+
+    - name: Configure CMake
+      run: |
+        cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: |
+        cmake --build build -- -j$(sysctl -n hw.ncpu)
+
+    - name: Test executable exists
+      run: |
+        if [ -f build/BlackHole3D ]; then
+          echo "✓ BlackHole3D created successfully"
+        else
+          echo "✗ BlackHole3D not found"
+          exit 1
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: black-hole-macos
+        path: build/BlackHole3D
+
+  summary:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Build Summary
+      run: |
+        echo "✅ All platform builds successful!"
+        echo ""
+        echo "Platform Status:"
+        echo "  - Windows: ✓ Success"
+        echo "  - Linux:   ✓ Success"
+        echo "  - macOS:   ✓ Success"
