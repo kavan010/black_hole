@@ -17,6 +17,7 @@
 #include "src/utils/logger.hpp"
 #include "src/utils/performance_monitor.hpp"
 #include "src/utils/ray_path_exporter.hpp"
+#include "src/utils/exceptions.hpp"
 #include "src/rendering/shader_manager.hpp"
 #include "src/rendering/bloom_renderer.hpp"
 #include "src/ui/gui_manager.hpp"
@@ -255,6 +256,7 @@ struct Engine {
     // -- Quad & Texture render -- //
     GLFWwindow* window;
     GLuint quadVAO;
+    GLuint quadVBO = 0;  // 🔧 RESOURCE FIX: Track VBO for cleanup
     GLuint texture;
     GLuint hdrTexture;  // HDR floating-point texture
     GLuint shaderProgram;
@@ -302,27 +304,31 @@ struct Engine {
     
     Engine() {
         if (!glfwInit()) {
-            cerr << "GLFW init failed\n";
-            exit(EXIT_FAILURE);
+            Logger::error("GLFW init failed");
+            throw GLFWException("Failed to initialize GLFW");
         }
+
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
         window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole", nullptr, nullptr);
         if (!window) {
-            cerr << "Failed to create GLFW window\n";
+            Logger::error("Failed to create GLFW window");
             glfwTerminate();
-            exit(EXIT_FAILURE);
+            throw GLFWException("Failed to create window");
         }
+
         glfwMakeContextCurrent(window);
         glewExperimental = GL_TRUE;
         GLenum glewErr = glewInit();
         if (glewErr != GLEW_OK) {
-            cerr << "Failed to initialize GLEW: "
-                << (const char*)glewGetErrorString(glewErr)
-                << "\n";
+            std::string errMsg = std::string("Failed to initialize GLEW: ") +
+                                 reinterpret_cast<const char*>(glewGetErrorString(glewErr));
+            Logger::error(errMsg);
+            glfwDestroyWindow(window);
             glfwTerminate();
-            exit(EXIT_FAILURE);
+            throw GLEWException(errMsg);
         }
         Logger::info("OpenGL ", glGetString(GL_VERSION));
 
@@ -515,7 +521,7 @@ struct Engine {
         std::ifstream in("tonemap.frag");
         if (!in.is_open()) {
             Logger::error("Failed to open tonemap.frag");
-            exit(EXIT_FAILURE);
+            throw FileException("tonemap.frag", "Could not open file");
         }
         std::stringstream ss;
         ss << in.rdbuf();
@@ -656,13 +662,13 @@ struct Engine {
             1.0f, -1.0f,  1.0f, 0.0f,  // bottom right
             1.0f,  1.0f,  1.0f, 1.0f   // top right
         };
-        
-        GLuint VAO, VBO;
+
+        GLuint VAO;
         glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
+        glGenBuffers(1, &quadVBO);  // 🔧 RESOURCE FIX: Save to member variable
 
         glBindVertexArray(VAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
 
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
@@ -686,6 +692,37 @@ struct Engine {
                     nullptr);
         vector<GLuint> VAOtexture = {VAO, texture};
         return VAOtexture;
+    }
+
+    // 🔧 RESOURCE FIX: Destructor to clean up OpenGL resources
+    ~Engine() {
+        // Clean up textures
+        if (hdrTexture) glDeleteTextures(1, &hdrTexture);
+        if (texture && texture != hdrTexture) glDeleteTextures(1, &texture);
+
+        // Clean up VAOs and VBOs
+        if (quadVAO) glDeleteVertexArrays(1, &quadVAO);
+        if (quadVBO) glDeleteBuffers(1, &quadVBO);
+        if (gridVAO) glDeleteVertexArrays(1, &gridVAO);
+        if (gridVBO) glDeleteBuffers(1, &gridVBO);
+        if (gridEBO) glDeleteBuffers(1, &gridEBO);
+
+        // Clean up UBOs
+        if (cameraUBO) glDeleteBuffers(1, &cameraUBO);
+        if (diskUBO) glDeleteBuffers(1, &diskUBO);
+        if (objectsUBO) glDeleteBuffers(1, &objectsUBO);
+        if (kerrUBO) glDeleteBuffers(1, &kerrUBO);
+
+        // Clean up shader programs
+        if (shaderProgram) glDeleteProgram(shaderProgram);
+        if (tonemapProgram) glDeleteProgram(tonemapProgram);
+        if (computeProgram) glDeleteProgram(computeProgram);
+        if (gridShaderProgram) glDeleteProgram(gridShaderProgram);
+
+        // Clean up bloom renderer (has its own cleanup)
+        bloomRenderer.cleanup();
+
+        Logger::debug("Engine resources cleaned up");
     }
     void renderScene() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -847,7 +884,12 @@ int main() {
     Logger::setLevel(LogLevel::INFO);
     Logger::setTimestamp(false);
 
-    setupCameraCallbacks(engine.window);
+    // 🔧 EXCEPTION HANDLING: Catch initialization and runtime errors
+    // Note: Global engine object's constructor exceptions cannot be caught here.
+    // If engine construction fails, the program will terminate before reaching main.
+    // This try-catch handles errors that occur during the main loop.
+    try {
+        setupCameraCallbacks(engine.window);
     vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
     // Performance monitoring
@@ -944,5 +986,37 @@ int main() {
 
     glfwDestroyWindow(engine.window);
     glfwTerminate();
+    Logger::info("Program exited normally");
     return 0;
+
+    } catch (const InitializationException& e) {
+        Logger::error("Initialization error: ", e.what());
+        Logger::error("The program could not be started. Please check:");
+        Logger::error("  - Graphics drivers are up to date");
+        Logger::error("  - OpenGL 4.3+ is supported");
+        Logger::error("  - All shader files are present");
+        return EXIT_FAILURE;
+
+    } catch (const ShaderException& e) {
+        Logger::error("Shader error: ", e.what());
+        Logger::error("A shader failed to compile or link.");
+        Logger::error("Please check the shader files for syntax errors.");
+        return EXIT_FAILURE;
+
+    } catch (const FileException& e) {
+        Logger::error("File error: ", e.what());
+        Logger::error("A required file could not be loaded.");
+        Logger::error("Please ensure all assets are in the correct directory.");
+        return EXIT_FAILURE;
+
+    } catch (const std::exception& e) {
+        Logger::error("Unexpected error: ", e.what());
+        Logger::error("The program encountered an unexpected error and must exit.");
+        return EXIT_FAILURE;
+
+    } catch (...) {
+        Logger::error("Unknown error occurred");
+        Logger::error("The program encountered a fatal error and must exit.");
+        return EXIT_FAILURE;
+    }
 }

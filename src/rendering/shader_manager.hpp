@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 #include "../utils/logger.hpp"
+#include "../utils/exceptions.hpp"
 
 /**
  * Manages shader compilation and program linking
@@ -65,8 +66,10 @@ public:
             glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
             std::vector<char> log(logLen);
             glGetProgramInfoLog(program, logLen, nullptr, log.data());
-            Logger::error("Compute shader link error (", path, "):\n", log.data());
-            exit(EXIT_FAILURE);
+            std::string errorMsg = "Compute shader link error (" + std::string(path) + "):\n" + log.data();
+            Logger::error(errorMsg);
+            glDeleteShader(shader);
+            throw ShaderException(errorMsg);
         }
 
         glDeleteShader(shader);
@@ -79,7 +82,7 @@ private:
         std::ifstream file(path);
         if (!file.is_open()) {
             Logger::error("Failed to open shader file: ", path);
-            exit(EXIT_FAILURE);
+            throw FileException(path, "Could not open file");
         }
 
         std::stringstream buffer;
@@ -106,8 +109,9 @@ private:
                 (type == GL_FRAGMENT_SHADER) ? "Fragment" :
                 (type == GL_COMPUTE_SHADER) ? "Compute" : "Unknown";
 
-            Logger::error(typeStr, " shader compile error (", name, "):\n", log.data());
-            exit(EXIT_FAILURE);
+            std::string errorMsg = std::string(typeStr) + " shader compile error (" + name + "):\n" + log.data();
+            Logger::error(errorMsg);
+            throw ShaderException(errorMsg);
         }
 
         return shader;
@@ -127,8 +131,9 @@ private:
             glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
             std::vector<char> log(logLen);
             glGetProgramInfoLog(program, logLen, nullptr, log.data());
-            Logger::error("Shader program link error:\n", log.data());
-            exit(EXIT_FAILURE);
+            std::string errorMsg = "Shader program link error:\n" + std::string(log.data());
+            Logger::error(errorMsg);
+            throw ShaderException(errorMsg);
         }
 
         return program;
