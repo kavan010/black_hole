@@ -20,6 +20,7 @@
 #include "src/rendering/shader_manager.hpp"
 #include "src/rendering/bloom_renderer.hpp"
 #include "src/ui/gui_manager.hpp"
+#include "third_party/imgui/imgui.h"  // Needed for ImGui::GetIO() in input callbacks
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -681,21 +682,46 @@ void setupCameraCallbacks(GLFWwindow* window) {
     glfwSetWindowUserPointer(window, &camera);
 
     glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
+        // 🔴 FIX: Check if ImGui wants to capture mouse input
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.WantCaptureMouse) {
+            return;  // ImGui is using the mouse (clicking buttons, etc.), don't rotate camera
+        }
+
         Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
         cam->processMouseButton(button, action, mods, win);
     });
 
     glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
+        // 🔴 FIX: Check if ImGui wants to capture mouse input
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.WantCaptureMouse) {
+            return;  // ImGui is using the mouse, don't process camera movement
+        }
+
         Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
         cam->processMouseMove(x, y);
     });
 
     glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
+        // 🔴 FIX: Check if ImGui wants to capture mouse input
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.WantCaptureMouse) {
+            return;  // ImGui is using scroll (scrolling panels, etc.), don't zoom camera
+        }
+
         Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
         cam->processScroll(xoffset, yoffset);
     });
 
     glfwSetKeyCallback(window, [](GLFWwindow* win, int key, int scancode, int action, int mods) {
+        // 🔴 FIX: Check if ImGui wants to capture keyboard input
+        // This prevents shortcuts from triggering while typing in GUI text fields
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.WantCaptureKeyboard) {
+            return;  // ImGui is using the keyboard, don't process shortcuts
+        }
+
         Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
         cam->processKey(key, scancode, action, mods);
 

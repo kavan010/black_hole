@@ -71,12 +71,12 @@ public:
 
     // UI状态
     bool showMainPanel = true;          // 显示主参数面板
-    bool showPerformancePanel = true;   // 显示性能监控面板
+    bool showPerformancePanel = false;  // 显示性能监控面板（默认隐藏，避免干扰新用户）
     bool showHUD = true;                // 显示抬头显示（HUD）
     bool showDemoWindow = false;        // 显示ImGui演示窗口
     bool showAboutWindow = false;       // 显示关于窗口
     bool showPresetsPanel = false;      // 显示预设面板
-    bool showWelcomeWindow = false;     // 显示欢迎窗口（首次使用）
+    bool showWelcomeWindow = true;      // 🔴 FIX: 默认显示欢迎窗口（首次使用）
 
 private:
     /**
