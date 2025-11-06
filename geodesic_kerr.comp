@@ -529,7 +529,10 @@ void main() {
     bool hitDisk      = false;
     bool hitObject    = false;
 
-    int steps = cam.moving ? 60000 : 60000;
+    // 🔧 PERFORMANCE FIX: Reduce step count to improve framerate
+    // Moving: 20k steps for responsive interaction (~3x faster)
+    // Stationary: 40k steps for higher quality (still 33% faster than before)
+    int steps = cam.moving ? 20000 : 40000;
     int actualSteps = 0;
     float initialEnergy = ray.E;
     float initialCarter = ray.Q;

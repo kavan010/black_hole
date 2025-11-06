@@ -68,6 +68,11 @@ struct Camera {
     // Get ray direction for screen coordinates (normalized device coordinates)
     // screenX, screenY in range [0, windowWidth] x [0, windowHeight]
     vec3 getRayDirection(double screenX, double screenY, int windowWidth, int windowHeight) const {
+        // 🔧 SAFETY FIX: Prevent division by zero in window coordinates
+        if (windowWidth <= 0 || windowHeight <= 0) {
+            return vec3(0.0f, 0.0f, 1.0f); // Forward direction as fallback
+        }
+
         // Convert to NDC: [-1, 1] x [-1, 1]
         float ndcX = (2.0f * screenX) / windowWidth - 1.0f;
         float ndcY = 1.0f - (2.0f * screenY) / windowHeight; // Flip Y
@@ -75,7 +80,15 @@ struct Camera {
         // Camera basis vectors
         vec3 fwd = normalize(target - position());
         vec3 worldUp = vec3(0, 1, 0);
-        vec3 right = normalize(cross(fwd, worldUp));
+
+        // 🔧 SAFETY FIX: Handle case when camera looks straight up/down
+        vec3 rightVec = cross(fwd, worldUp);
+        if (length(rightVec) < 1e-6f) {
+            // Camera is looking straight up or down, use alternative up vector
+            worldUp = vec3(1, 0, 0);
+            rightVec = cross(fwd, worldUp);
+        }
+        vec3 right = normalize(rightVec);
         vec3 up = cross(right, fwd);
 
         // Field of view
@@ -281,6 +294,9 @@ struct Engine {
     int COMPUTE_HEIGHT_FULL   = 150;
     int COMPUTE_WIDTH_MOVING  = 160;   // 80% quality while moving
     int COMPUTE_HEIGHT_MOVING = 120;
+    // 🔧 PERFORMANCE FIX: Cache texture size to avoid reallocating every frame
+    int currentComputeWidth = 0;
+    int currentComputeHeight = 0;
     float width = 100000000000.0f; // Width of the viewport in meters
     float height = 75000000000.0f; // Height of the viewport in meters
     
@@ -512,16 +528,22 @@ struct Engine {
         int cw = cam.moving ? COMPUTE_WIDTH_MOVING : COMPUTE_WIDTH_FULL;
         int ch = cam.moving ? COMPUTE_HEIGHT_MOVING : COMPUTE_HEIGHT_FULL;
 
-        // 1) reallocate the HDR texture if needed
-        glBindTexture(GL_TEXTURE_2D, hdrTexture);
-        glTexImage2D(GL_TEXTURE_2D,
-                    0,                // mip
-                    GL_RGBA16F,       // HDR internal format
-                    cw,               // width
-                    ch,               // height
-                    0, GL_RGBA,
-                    GL_FLOAT,         // Use float data type
-                    nullptr);
+        // 🔧 PERFORMANCE FIX: Only reallocate texture when resolution changes
+        // This avoids expensive glTexImage2D calls every frame (was causing major slowdown)
+        if (currentComputeWidth != cw || currentComputeHeight != ch) {
+            glBindTexture(GL_TEXTURE_2D, hdrTexture);
+            glTexImage2D(GL_TEXTURE_2D,
+                        0,                // mip
+                        GL_RGBA16F,       // HDR internal format
+                        cw,               // width
+                        ch,               // height
+                        0, GL_RGBA,
+                        GL_FLOAT,         // Use float data type
+                        nullptr);
+            currentComputeWidth = cw;
+            currentComputeHeight = ch;
+            Logger::debug("Compute texture resized to ", cw, "x", ch);
+        }
 
         // 2) bind compute program & UBOs
         glUseProgram(computeProgram);
@@ -844,33 +866,35 @@ int main() {
             lastStatsTime = now;
         }
 
-        // Gravity
-        for (auto& obj : objects) {
-            for (auto& obj2 : objects) {
-                if (&obj == &obj2) continue; // skip self-interaction
-                 float dx  = obj2.posRadius.x - obj.posRadius.x;
-                 float dy = obj2.posRadius.y - obj.posRadius.y;
-                 float dz = obj2.posRadius.z - obj.posRadius.z;
-                 float distance = sqrt(dx * dx + dy * dy + dz * dz);
-                 if (distance > 0) {
-                        vector<double> direction = {dx / distance, dy / distance, dz / distance};
-                        //distance *= 1000;
-                        double Gforce = (G * obj.mass * obj2.mass) / (distance * distance);
+        // 🔧 PHYSICS FIX: Gravity calculation with proper time step
+        // 🔧 SAFETY FIX: Prevent division by zero with minimum distance check
+        if (Gravity && deltaTime > 0.0) {
+            const float MIN_DISTANCE = 1e8f; // 100 million meters minimum separation
+            const float dt = float(deltaTime);
 
-                        double acc1 = Gforce / obj.mass;
-                        std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1, direction[2] * acc1};
-                        if (Gravity) {
-                            obj.velocity.x += acc[0];
-                            obj.velocity.y += acc[1];
-                            obj.velocity.z += acc[2];
+            for (auto& obj : objects) {
+                vec3 totalAccel(0.0f);
 
-                            obj.posRadius.x += obj.velocity.x;
-                            obj.posRadius.y += obj.velocity.y;
-                            obj.posRadius.z += obj.velocity.z;
-                            // Velocity logging removed (was causing 360+ outputs/sec)
-                            // Use Logger::debug() if needed for debugging specific objects
-                        }
+                for (auto& obj2 : objects) {
+                    if (&obj == &obj2) continue; // skip self-interaction
+
+                    vec3 delta = vec3(obj2.posRadius) - vec3(obj.posRadius);
+                    float distance = length(delta);
+
+                    // 🔧 SAFETY: Only apply force if objects are sufficiently far apart
+                    if (distance > MIN_DISTANCE) {
+                        vec3 direction = normalize(delta);
+                        float dist2 = distance * distance;
+                        float forceMagnitude = float((G * obj2.mass) / dist2);
+                        totalAccel += direction * forceMagnitude;
                     }
+                }
+
+                // Simple Euler integration (consider Verlet for better stability)
+                obj.velocity += vec3(totalAccel * dt);
+                obj.posRadius += vec4(obj.velocity * dt, 0.0f);
+                // Velocity logging removed (was causing 360+ outputs/sec)
+                // Use Logger::debug() if needed for debugging specific objects
             }
         }
 
