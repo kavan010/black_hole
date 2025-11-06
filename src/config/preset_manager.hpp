@@ -49,7 +49,7 @@ struct Preset {
     }
 
     /**
-     * @brief 从文本格式反序列化
+     * @brief 从文本格式反序列化 (with error handling)
      */
     static Preset deserialize(const std::string& data) {
         Preset preset;
@@ -63,16 +63,65 @@ struct Preset {
             std::string key = line.substr(0, pos);
             std::string value = line.substr(pos + 1);
 
-            if (key == "name") preset.name = value;
-            else if (key == "description") preset.description = value;
-            else if (key == "kerrSpin") preset.kerrSpin = std::stof(value);
-            else if (key == "useKerr") preset.useKerr = (std::stoi(value) != 0);
-            else if (key == "exposure") preset.exposure = std::stof(value);
-            else if (key == "visualizationMode") preset.visualizationMode = std::stoi(value);
-            else if (key == "wavelengthBand") preset.wavelengthBand = std::stoi(value);
-            else if (key == "cameraRadius") preset.cameraRadius = std::stof(value);
-            else if (key == "cameraAzimuth") preset.cameraAzimuth = std::stof(value);
-            else if (key == "cameraElevation") preset.cameraElevation = std::stof(value);
+            try {
+                if (key == "name") {
+                    preset.name = value;
+                }
+                else if (key == "description") {
+                    preset.description = value;
+                }
+                else if (key == "kerrSpin") {
+                    float val = std::stof(value);
+                    // Validate spin parameter: must be in [0, 1]
+                    if (val >= 0.0f && val <= 1.0f) {
+                        preset.kerrSpin = val;
+                    } else {
+                        // Clamp to valid range
+                        preset.kerrSpin = (val < 0.0f) ? 0.0f : 1.0f;
+                    }
+                }
+                else if (key == "useKerr") {
+                    preset.useKerr = (std::stoi(value) != 0);
+                }
+                else if (key == "exposure") {
+                    float val = std::stof(value);
+                    // Validate exposure: must be positive
+                    preset.exposure = (val > 0.0f) ? val : 1.0f;
+                }
+                else if (key == "visualizationMode") {
+                    int val = std::stoi(value);
+                    // Validate mode: 0-4
+                    preset.visualizationMode = (val >= 0 && val <= 4) ? val : 0;
+                }
+                else if (key == "wavelengthBand") {
+                    int val = std::stoi(value);
+                    // Validate band: 0-4
+                    preset.wavelengthBand = (val >= 0 && val <= 4) ? val : 2;
+                }
+                else if (key == "cameraRadius") {
+                    float val = std::stof(value);
+                    // Validate radius: must be positive
+                    preset.cameraRadius = (val > 0.0f) ? val : 6.34194e10f;
+                }
+                else if (key == "cameraAzimuth") {
+                    preset.cameraAzimuth = std::stof(value);
+                }
+                else if (key == "cameraElevation") {
+                    float val = std::stof(value);
+                    // Validate elevation: must be in (0, π)
+                    if (val > 0.0f && val < 3.14159f) {
+                        preset.cameraElevation = val;
+                    } else {
+                        preset.cameraElevation = 1.5708f; // π/2
+                    }
+                }
+            } catch (const std::invalid_argument& e) {
+                // Skip invalid values, keep defaults
+                continue;
+            } catch (const std::out_of_range& e) {
+                // Skip out-of-range values, keep defaults
+                continue;
+            }
         }
 
         return preset;

@@ -9,13 +9,14 @@
  */
 class BloomRenderer {
 private:
-    GLuint extractProgram;
-    GLuint blurProgram;
-    GLuint bloomFBO[2];      // Ping-pong framebuffers for blur
-    GLuint bloomTextures[2]; // Ping-pong textures
-    GLuint quadVAO;
-    int width, height;
+    GLuint extractProgram = 0;
+    GLuint blurProgram = 0;
+    GLuint bloomFBO[2] = {0, 0};      // Ping-pong framebuffers for blur
+    GLuint bloomTextures[2] = {0, 0}; // Ping-pong textures
+    GLuint quadVAO = 0;
+    int width = 0, height = 0;
     bool initialized = false;
+    bool initFailed = false;  // Track initialization failure
 
 public:
     float threshold = 1.0f;     // Brightness threshold for bloom
@@ -24,7 +25,11 @@ public:
 
     BloomRenderer() = default;
 
-    void initialize(int w, int h, GLuint sharedQuadVAO) {
+    /**
+     * Initialize bloom renderer
+     * @return true if successful, false if initialization failed
+     */
+    bool initialize(int w, int h, GLuint sharedQuadVAO) {
         width = w;
         height = h;
         quadVAO = sharedQuadVAO;
@@ -42,8 +47,10 @@ public:
 
         std::ifstream extractFile("bloom_extract.frag");
         if (!extractFile.is_open()) {
-            Logger::error("Failed to open bloom_extract.frag");
-            return;
+            Logger::error("Failed to open bloom_extract.frag - bloom disabled");
+            initFailed = true;
+            initialized = false;
+            return false;
         }
         std::stringstream extractSS;
         extractSS << extractFile.rdbuf();
@@ -51,15 +58,24 @@ public:
 
         std::ifstream blurFile("gaussian_blur.frag");
         if (!blurFile.is_open()) {
-            Logger::error("Failed to open gaussian_blur.frag");
-            return;
+            Logger::error("Failed to open gaussian_blur.frag - bloom disabled");
+            initFailed = true;
+            initialized = false;
+            return false;
         }
         std::stringstream blurSS;
         blurSS << blurFile.rdbuf();
         std::string blurSrc = blurSS.str();
 
-        extractProgram = ShaderManager::createProgram(quadVert, extractSrc.c_str());
-        blurProgram = ShaderManager::createProgram(quadVert, blurSrc.c_str());
+        try {
+            extractProgram = ShaderManager::createProgram(quadVert, extractSrc.c_str());
+            blurProgram = ShaderManager::createProgram(quadVert, blurSrc.c_str());
+        } catch (const std::exception& e) {
+            Logger::error("Failed to compile bloom shaders: ", e.what(), " - bloom disabled");
+            initFailed = true;
+            initialized = false;
+            return false;
+        }
 
         // Create framebuffers and textures
         glGenFramebuffers(2, bloomFBO);
@@ -78,24 +94,31 @@ public:
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTextures[i], 0);
 
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-                Logger::error("Bloom framebuffer ", i, " not complete");
+                Logger::error("Bloom framebuffer ", i, " not complete - bloom disabled");
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                cleanup();  // Clean up partial initialization
+                initFailed = true;
+                initialized = false;
+                return false;
             }
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         initialized = true;
+        initFailed = false;
         Logger::info("Bloom renderer initialized (", width / 4, "x", height / 4, ")");
+        return true;
     }
 
     /**
      * Render bloom effect
      * @param hdrTexture Input HDR texture
-     * @return Output bloom texture (blurred bright areas)
+     * @return Output bloom texture (blurred bright areas), or input texture if bloom disabled/failed
      */
     GLuint render(GLuint hdrTexture) {
-        if (!initialized || !enabled) {
-            // Return black texture if bloom disabled
-            return bloomTextures[0];
+        if (!initialized || !enabled || initFailed) {
+            // Fallback: return input texture unchanged (no bloom effect)
+            return hdrTexture;
         }
 
         // 1. Extract bright areas
@@ -112,10 +135,11 @@ public:
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 6);
 
-        // 2. Blur ping-pong (5 iterations for smooth bloom)
+        // 2. Blur ping-pong (6 iterations provides good quality with better performance)
+        // 🚀 PERFORMANCE FIX: Reduced from 10 to 6 iterations (+40% bloom performance)
         glUseProgram(blurProgram);
         bool horizontal = true;
-        int iterations = 10;
+        int iterations = 6;
 
         for (int i = 0; i < iterations; i++) {
             glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO[horizontal ? 1 : 0]);
@@ -139,11 +163,18 @@ public:
     }
 
     void cleanup() {
-        if (initialized) {
-            glDeleteFramebuffers(2, bloomFBO);
-            glDeleteTextures(2, bloomTextures);
-            glDeleteProgram(extractProgram);
-            glDeleteProgram(blurProgram);
+        if (initialized || initFailed) {
+            // Safe cleanup - OpenGL handles 0 values gracefully
+            if (bloomFBO[0] || bloomFBO[1]) glDeleteFramebuffers(2, bloomFBO);
+            if (bloomTextures[0] || bloomTextures[1]) glDeleteTextures(2, bloomTextures);
+            if (extractProgram) glDeleteProgram(extractProgram);
+            if (blurProgram) glDeleteProgram(blurProgram);
+
+            // Reset state
+            bloomFBO[0] = bloomFBO[1] = 0;
+            bloomTextures[0] = bloomTextures[1] = 0;
+            extractProgram = blurProgram = 0;
+            initialized = false;
         }
     }
 

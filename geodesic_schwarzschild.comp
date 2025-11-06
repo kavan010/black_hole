@@ -1,43 +1,30 @@
 /*
- * KERR BLACK HOLE GEODESIC RAYTRACER (SPECIALIZED VERSION)
- * =========================================================
+ * SCHWARZSCHILD BLACK HOLE GEODESIC RAYTRACER (SPECIALIZED VERSION)
+ * =================================================================
  *
- * This is a SPECIALIZED compute shader for ROTATING (Kerr) black holes.
+ * This is a SPECIALIZED compute shader for NON-ROTATING (Schwarzschild) black holes.
  * All branches have been removed for maximum GPU performance.
  *
- * KERR METRIC (Boyer-Lindquist coordinates):
- *   ds² = -(1 - 2Mr/Σ) dt² + Σ/Δ dr² + Σ dθ² +
- *         (r² + a² + 2Ma²r sin²θ/Σ) sin²θ dφ² - 4Mar sin²θ/Σ dt dφ
+ * SCHWARZSCHILD METRIC (spherical coordinates):
+ *   ds² = -(1 - rs/r) dt² + (1 - rs/r)^(-1) dr² + r² (dθ² + sin²θ dφ²)
  *
  * where:
- *   M = Black hole mass
- *   a = J/M = Angular momentum per unit mass (spin parameter)
- *   Σ = r² + a² cos²θ
- *   Δ = r² - 2Mr + a²
+ *   rs = 2GM/c² = Schwarzschild radius
  *
  * For Sagittarius A*:
  *   M = 8.54×10³⁶ kg → rs = 2GM/c² = 1.269×10¹⁰ m
- *   Spin parameter: 0 ≤ a ≤ M (0 = Schwarzschild, 1 = maximal rotation)
  *
  * CONSERVED QUANTITIES:
  *   E = Energy per unit mass
  *   L = Angular momentum per unit mass
- *   Q = Carter constant (specific to Kerr metric)
- *
- * FEATURES:
- *   - Frame dragging (spacetime rotation)
- *   - Ergosphere (region where nothing can remain stationary)
- *   - Inner and outer event horizons
- *   - Innermost stable circular orbit (ISCO) depends on spin
  *
  * PERFORMANCE OPTIMIZATION:
  *   This shader eliminates all if(kerrParams.useKerr) branches from the RK4 integrator.
  *   Expected performance gain: +40-50% compared to branched version.
  *
  * REFERENCES:
- *   - Bardeen, Press, Teukolsky: "Rotating Black Holes" (1972)
+ *   - Schwarzschild: "Über das Gravitationsfeld eines Massenpunktes" (1916)
  *   - Chandrasekhar: "Mathematical Theory of Black Holes" (1983)
- *   - James et al.: "Gravitational Lensing by Spinning Black Holes" (2015)
  */
 
 #version 430
@@ -70,8 +57,8 @@ layout(std140, binding = 3) uniform Objects {
 };
 
 layout(std140, binding = 4) uniform KerrParams {
-    float spin;              // Spin parameter: 0 = Schwarzschild, 1 = maximal
-    bool useKerr;            // Switch between Schwarzschild and Kerr
+    float spin;              // Unused in Schwarzschild
+    bool useKerr;            // Always false for this shader
     float visualizationMode; // 0=Normal, 1=Redshift, 2=Steps, 3=Energy, 4=Carter
     float wavelengthBand;    // 0=Radio, 1=IR, 2=Optical, 3=X-ray, 4=Multi
     float _pad1, _pad2, _pad3, _pad4;
@@ -85,7 +72,7 @@ const float SagA_rs = 1.269e10;   // Schwarzschild radius
 const float D_LAMBDA = 1e7;
 const double ESCAPE_R = 1e30;
 
-// Globals to store hit info
+// Globals to store hit info (per-invocation in compute shaders)
 vec4 objectColor = vec4(0.0);
 vec3 hitCenter = vec3(0.0);
 float hitRadius = 0.0;
@@ -93,18 +80,18 @@ float hitRadius = 0.0;
 struct Ray {
     float r, theta, phi;
     float dr, dtheta, dphi;
-    float E, L, Q;  // Conserved quantities (Q is Carter constant)
+    float E, L, Q;  // Q unused in Schwarzschild but kept for compatibility
     float x, y, z;  // Cartesian coordinates
     float intensity; // Photon intensity (for radiative transfer)
 };
 
 /**
- * Initialize ray for Kerr metric
+ * Initialize ray for Schwarzschild metric
  */
-Ray initRayKerr(vec3 pos, vec3 dir) {
+Ray initRay(vec3 pos, vec3 dir) {
     Ray ray;
 
-    // Convert to Boyer-Lindquist coordinates (same as spherical for a=0)
+    // Convert to spherical coordinates
     ray.r = length(pos);
     ray.theta = acos(pos.z / ray.r);
     ray.phi = atan(pos.y, pos.x);
@@ -112,120 +99,54 @@ Ray initRayKerr(vec3 pos, vec3 dir) {
     float dx = dir.x, dy = dir.y, dz = dir.z;
     ray.dr     = sin(ray.theta)*cos(ray.phi)*dx + sin(ray.theta)*sin(ray.phi)*dy + cos(ray.theta)*dz;
     ray.dtheta = (cos(ray.theta)*cos(ray.phi)*dx + cos(ray.theta)*sin(ray.phi)*dy - sin(ray.theta)*dz) / ray.r;
-    ray.dphi   = (-sin(ray.phi)*dx + cos(ray.phi)*dy) / (ray.r * sin(ray.theta));
 
-    // Compute conserved quantities for Kerr metric
-    float a = kerrParams.spin * SagA_rs / 2.0;  // Spin parameter in meters
-    float r2 = ray.r * ray.r;
-    float a2 = a * a;
-    float Sigma = r2 + a2 * cos(ray.theta) * cos(ray.theta);
-    float Delta = r2 - 2.0 * SagA_rs * ray.r + a2;
+    // Prevent division by zero at poles
+    float sinTheta = sin(ray.theta);
+    ray.dphi = (abs(sinTheta) > 1e-6) ?
+        ((-sin(ray.phi)*dx + cos(ray.phi)*dy) / (ray.r * sinTheta)) : 0.0;
 
-    // Energy (normalized, E = 1 for photons at infinity)
+    // Energy (normalized to 1 for photons at infinity)
     ray.E = 1.0;
 
-    // Angular momentum L (impact parameter)
-    // For now, use a simplified initialization
+    // Angular momentum (impact parameter)
     ray.L = ray.r * ray.r * sin(ray.theta) * ray.dphi;
 
-    // Carter constant Q - improved calculation
-    // Q = p_theta^2 + cos^2(theta)[a^2(E^2-1) + L^2/sin^2(theta)]
-    // For photons (E^2 = 1), this simplifies
-    float cosTheta = cos(ray.theta);
-    float sinTheta = sin(ray.theta);
-    float ptheta = Sigma * ray.dtheta;
-
-    // Calculate Q more accurately
-    if (abs(sinTheta) > 1e-6) {
-        ray.Q = ptheta * ptheta + cosTheta * cosTheta * (ray.L * ray.L / (sinTheta * sinTheta));
-    } else {
-        // Near poles, use limit
-        ray.Q = ptheta * ptheta;
-    }
+    // Q is not used in Schwarzschild, but kept for consistency
+    ray.Q = 0.0;
 
     ray.x = pos.x;
     ray.y = pos.y;
     ray.z = pos.z;
 
-    // Initialize photon intensity (normalized to 1.0 at emission)
     ray.intensity = 1.0;
 
     return ray;
 }
 
 /**
- * Improved Geodesic equations for Kerr metric
- * Uses Hamilton-Jacobi formulation with E, L, Q conserved quantities
+ * Schwarzschild geodesic equations
+ * Pure non-rotating black hole - NO BRANCHES
  */
-void geodesicRHSKerr(Ray ray, out vec3 d1, out vec3 d2) {
+void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     float r = ray.r, theta = ray.theta;
     float dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi;
-    float a = kerrParams.spin * SagA_rs / 2.0;
-
-    float r2 = r * r;
-    float a2 = a * a;
-    float cosTheta = cos(theta);
-    float sinTheta = sin(theta);
-    float cos2 = cosTheta * cosTheta;
-    float sin2 = sinTheta * sinTheta;
-    float Sigma = r2 + a2 * cos2;
-    float Delta = r2 - 2.0 * SagA_rs * r + a2;
-
-    // Get conserved quantities
-    float E = ray.E;
-    float L = ray.L;
-    float Q = ray.Q;
+    float f = 1.0 - SagA_rs / r;
+    float dt_dL = ray.E / f;
 
     d1 = vec3(dr, dtheta, dphi);
+    d2.x = -(SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL
+         + (SagA_rs / (2.0 * r*r * f)) * dr * dr
+         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
+    d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
 
-    // Radial effective potential R(r)
-    // R = [E(r²+a²) - aL]² - Δ[Q + (L-aE)²]
-    float term1 = E * (r2 + a2) - a * L;
-    float term2 = L - a * E;
-    float R = term1 * term1 - Delta * (Q + term2 * term2);
-
-    // Theta effective potential Θ(θ)
-    // Θ = Q - cos²θ[a²E² + L²/sin²θ]
-    float Theta = Q - cos2 * (a2 * E * E + (sin2 > 1e-6 ? L * L / sin2 : 0.0));
-
-    // Ensure potentials are non-negative (numerical safety)
-    R = max(R, 0.0);
-    Theta = max(Theta, 0.0);
-
-    // First derivatives (velocities) - these should match current values
-    // But we recalculate to ensure consistency with potentials
-    float dr_new = sign(dr) * sqrt(R) / Sigma;
-    float dtheta_new = sign(dtheta) * sqrt(Theta) / Sigma;
-
-    // Phi angular velocity with frame dragging
-    // dφ/dλ = L/(Σsin²θ) + a[r²+a²-ΔaL/E]/[Σ·Δ]
-    float dphi_new = (sin2 > 1e-6 ? L / (Sigma * sin2) : 0.0) +
-                     a * (r2 + a2 - Delta * a * L / E) / (Sigma * Delta);
-
-    // Second derivatives (accelerations)
-    // These come from differentiating the first-order equations
-
-    // d²r/dλ² = (1/2Σ) × [dR/dr - 2r·R/Σ]
-    float dR_dr = 2.0 * E * E * r - 2.0 * SagA_rs * (Q + term2 * term2) +
-                  2.0 * (E * (r2 + a2) - a * L) * (2.0 * r * E) / Delta;
-    d2.x = (dR_dr - 2.0 * r * R / Sigma) / (2.0 * Sigma);
-
-    // d²θ/dλ² = (1/2Σ) × [dΘ/dθ + 2a²cosθsinθ·Θ/Σ]
-    float dTheta_dtheta = 2.0 * cosTheta * sinTheta * (a2 * E * E + (sin2 > 1e-6 ? L * L / sin2 : 0.0)) +
-                          (sin2 > 1e-6 ? -2.0 * cos2 * L * L * cosTheta / (sinTheta * sin2 * sin2) : 0.0);
-    d2.y = (dTheta_dtheta + 2.0 * a2 * cosTheta * sinTheta * Theta / Sigma) / (2.0 * Sigma);
-
-    // d²φ/dλ² = derivative of frame-dragging term
-    float dSigma_dr = 2.0 * r;
-    float dDelta_dr = 2.0 * r - 2.0 * SagA_rs;
-    d2.z = -dphi_new * dSigma_dr * dr / Sigma +
-           a * E * dDelta_dr * dr / (Delta * Delta);
+    // Prevent division by zero at poles (theta = 0 or π)
+    float sinTheta = sin(theta);
+    float cotTheta = (abs(sinTheta) > 1e-6) ? cos(theta) / sinTheta : 0.0;
+    d2.z = -2.0*dr*dphi/r - 2.0*cotTheta * dtheta * dphi;
 }
 
-// Schwarzschild geodesic function removed - this shader is Kerr-only for performance
-
 /**
- * RK4 integration step - KERR ONLY, NO BRANCHES
+ * RK4 integration step - SCHWARZSCHILD ONLY, NO BRANCHES
  * This eliminates GPU warp divergence for 40-50% performance gain
  */
 void rk4Step(inout Ray ray, float dL) {
@@ -233,7 +154,7 @@ void rk4Step(inout Ray ray, float dL) {
 
     // k1 - NO BRANCH
     vec3 k1_pos, k1_vel;
-    geodesicRHSKerr(r0, k1_pos, k1_vel);
+    geodesicRHS(r0, k1_pos, k1_vel);
 
     // k2 - NO BRANCH
     Ray r2 = r0;
@@ -244,7 +165,7 @@ void rk4Step(inout Ray ray, float dL) {
     r2.dtheta = r0.dtheta + 0.5 * dL * k1_vel.y;
     r2.dphi   = r0.dphi   + 0.5 * dL * k1_vel.z;
     vec3 k2_pos, k2_vel;
-    geodesicRHSKerr(r2, k2_pos, k2_vel);
+    geodesicRHS(r2, k2_pos, k2_vel);
 
     // k3 - NO BRANCH
     Ray r3 = r0;
@@ -255,7 +176,7 @@ void rk4Step(inout Ray ray, float dL) {
     r3.dtheta = r0.dtheta + 0.5 * dL * k2_vel.y;
     r3.dphi   = r0.dphi   + 0.5 * dL * k2_vel.z;
     vec3 k3_pos, k3_vel;
-    geodesicRHSKerr(r3, k3_pos, k3_vel);
+    geodesicRHS(r3, k3_pos, k3_vel);
 
     // k4 - NO BRANCH
     Ray r4 = r0;
@@ -266,7 +187,7 @@ void rk4Step(inout Ray ray, float dL) {
     r4.dtheta = r0.dtheta + dL * k3_vel.y;
     r4.dphi   = r0.dphi   + dL * k3_vel.z;
     vec3 k4_pos, k4_vel;
-    geodesicRHSKerr(r4, k4_pos, k4_vel);
+    geodesicRHS(r4, k4_pos, k4_vel);
 
     // Weighted average
     ray.r      = r0.r      + (dL/6.0) * (k1_pos.x + 2.0*k2_pos.x + 2.0*k3_pos.x + k4_pos.x);
@@ -307,100 +228,56 @@ bool crossesEquatorialPlane(vec3 oldPos, vec3 newPos) {
     return crossed && (r >= disk_r1 && r <= disk_r2);
 }
 
-/**
- * Calculate gravitational redshift factor
- * z = 1/sqrt(1 - rs/r) - 1
- * Higher z = stronger redshift (deeper in gravity well)
- */
 float gravitationalRedshift(float r) {
     float f = 1.0 - SagA_rs / r;
-    if (f <= 0.0) return 100.0; // Inside event horizon
+    if (f <= 0.0) return 100.0;
     return 1.0 / sqrt(f) - 1.0;
 }
 
-/**
- * Shakura-Sunyaev accretion disk model
- * Temperature: T(r) ∝ r^(-3/4)
- * Luminosity: L(r) ∝ T^4
- * Returns (temperature_normalized, doppler_boost, redshift_factor)
- */
 vec3 shakuraSunyaev(float r, float phi, vec3 rayDir) {
-    // Normalized temperature (peak at inner edge)
     float r_norm = (r - disk_r1) / (disk_r2 - disk_r1);
-    float temperature = pow(1.0 / (r / disk_r1), 0.75); // T ∝ r^(-3/4)
+    float temperature = pow(1.0 / (r / disk_r1), 0.75);
 
-    // Doppler boost from rotating disk
-    // Assuming Keplerian rotation: v_phi = sqrt(GM/r)
-    float v_orbital = sqrt(SagA_rs * c * c / (2.0 * r)); // Keplerian velocity
-    float v_tangent = v_orbital / c; // Fraction of speed of light
+    float v_orbital = sqrt(SagA_rs * c * c / (2.0 * r));
+    float v_tangent = v_orbital / c;
 
-    // Disk rotates counterclockwise (when viewed from +Y)
     vec3 diskVelocity = vec3(-sin(phi), 0.0, cos(phi)) * v_tangent;
 
-    // Doppler factor: 1 / gamma(1 - v·n/c)
     float vdotn = dot(diskVelocity, normalize(rayDir));
     float gamma = 1.0 / sqrt(1.0 - v_tangent * v_tangent);
     float dopplerBoost = 1.0 / (gamma * (1.0 - vdotn));
 
-    // Gravitational redshift
     float redshiftFactor = sqrt(1.0 - SagA_rs / r);
 
     return vec3(temperature, dopplerBoost, redshiftFactor);
 }
 
-/**
- * Convert temperature to blackbody color (simplified)
- * Low T: Red-orange
- * Mid T: Yellow-white
- * High T: Blue-white
- */
 vec3 blackbodyColor(float temperature) {
-    // Normalized temperature [0, 1]
     float t = clamp(temperature, 0.0, 1.0);
 
     if (t < 0.33) {
-        // Red → Orange
         return mix(vec3(1.0, 0.2, 0.0), vec3(1.0, 0.5, 0.1), t / 0.33);
     } else if (t < 0.66) {
-        // Orange → Yellow-White
         return mix(vec3(1.0, 0.5, 0.1), vec3(1.0, 0.9, 0.7), (t - 0.33) / 0.33);
     } else {
-        // Yellow-White → Blue-White
         return mix(vec3(1.0, 0.9, 0.7), vec3(0.7, 0.8, 1.0), (t - 0.66) / 0.34);
     }
 }
 
-/**
- * Apply wavelength-specific color mapping
- * Different bands emphasize different physical processes
- */
 vec3 applyWavelengthBand(vec3 baseColor, float temperature, int band) {
     if (band == 0) {
-        // RADIO: Long wavelengths, see cool material and magnetic fields
-        // Map to red-orange-yellow (false color)
         float intensity = length(baseColor);
         return mix(vec3(0.3, 0.0, 0.0), vec3(1.0, 0.6, 0.0), temperature) * intensity;
-
     } else if (band == 1) {
-        // INFRARED: Thermal radiation, dust
-        // Map to orange-red (heat signature)
         float intensity = length(baseColor);
         return mix(vec3(0.5, 0.0, 0.0), vec3(1.0, 0.3, 0.0), temperature) * intensity * 1.5;
-
     } else if (band == 2) {
-        // OPTICAL: Visible light (default)
         return baseColor;
-
     } else if (band == 3) {
-        // X-RAY: High energy photons from hot accretion
-        // Emphasize hottest regions, map to blue-violet-white
         float intensity = length(baseColor);
-        float xray_response = pow(temperature, 2.0); // X-rays scale with T^2
+        float xray_response = pow(temperature, 2.0);
         return mix(vec3(0.2, 0.2, 0.5), vec3(0.8, 0.9, 1.0), xray_response) * intensity * 2.0;
-
     } else {
-        // MULTI-WAVELENGTH: Combine all bands (Hubble palette style)
-        // Radio → Red, IR → Green, X-ray → Blue
         float radio_weight = (1.0 - temperature) * 0.5;
         float optical_weight = 0.5;
         float xray_weight = temperature * 0.7;
@@ -413,59 +290,33 @@ vec3 applyWavelengthBand(vec3 baseColor, float temperature, int band) {
     }
 }
 
-/**
- * Update photon intensity due to radiative transfer effects
- * Includes gravitational redshift and optional absorption
- */
 void updatePhotonIntensity(inout Ray ray, float dL) {
-    // Gravitational redshift effect on intensity
-    // I ∝ (1 + z)^(-4) for blackbody radiation
-    // z = sqrt(1-rs/r_emission) / sqrt(1-rs/r_observer) - 1
-    // Simplified: track cumulative redshift factor
-
     float r = ray.r;
     float f = 1.0 - SagA_rs / r;
 
     if (f > 0.0) {
-        // Gravitational redshift factor
         float g_factor = sqrt(f);
-
-        // Intensity decreases as (g_factor)^4 when moving away from BH
-        // (approximately - this is a simplified model)
         float intensity_factor = 1.0 / (1.0 + 0.0001 * dL / SagA_rs);
-
         ray.intensity *= intensity_factor;
 
-        // Optional: absorption in accretion disk region
-        // Simple exponential attenuation near disk
         float y = abs(ray.y);
-        if (y < 5e9) { // Near equatorial plane
+        if (y < 5e9) {
             float disk_r = length(vec2(ray.x, ray.z));
             if (disk_r >= disk_r1 && disk_r <= disk_r2) {
-                // Optical depth proportional to disk thickness
                 float tau = 0.00001 * dL / SagA_rs;
                 ray.intensity *= exp(-tau);
             }
         }
     } else {
-        // Inside event horizon - intensity goes to zero
         ray.intensity = 0.0;
     }
 
-    // Clamp intensity to reasonable range
     ray.intensity = clamp(ray.intensity, 0.0, 10.0);
 }
 
-/**
- * Map redshift value to color
- * Blue = weak redshift (far from BH)
- * Red = strong redshift (close to BH)
- */
 vec3 redshiftToColor(float z) {
-    // Clamp to reasonable range [0, 10]
     float t = clamp(z / 10.0, 0.0, 1.0);
 
-    // Blue → Cyan → Green → Yellow → Red
     if (t < 0.25) {
         return mix(vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 1.0), t * 4.0);
     } else if (t < 0.5) {
@@ -478,7 +329,6 @@ vec3 redshiftToColor(float z) {
 }
 
 void main() {
-    // Get actual texture dimensions from output image
     ivec2 texSize = imageSize(outImage);
     int WIDTH  = texSize.x;
     int HEIGHT = texSize.y;
@@ -490,7 +340,7 @@ void main() {
     float u = (2.0 * (pix.x + 0.5) / WIDTH - 1.0) * cam.aspect * cam.tanHalfFov;
     float v = (1.0 - 2.0 * (pix.y + 0.5) / HEIGHT) * cam.tanHalfFov;
     vec3 dir = normalize(u * cam.camRight - v * cam.camUp + cam.camForward);
-    Ray ray = initRayKerr(cam.camPos, dir);
+    Ray ray = initRay(cam.camPos, dir);
 
     vec4 color = vec4(0.0);
     vec3 prevPos = vec3(ray.x, ray.y, ray.z);
@@ -499,20 +349,17 @@ void main() {
     bool hitDisk      = false;
     bool hitObject    = false;
 
-    // 🔧 PERFORMANCE FIX: Reduce step count to improve framerate
-    // Moving: 20k steps for responsive interaction (~3x faster)
-    // Stationary: 40k steps for higher quality (still 33% faster than before)
     int steps = cam.moving ? 20000 : 40000;
     int actualSteps = 0;
     float initialEnergy = ray.E;
     float initialCarter = ray.Q;
-    float hitRadius = 0.0; // Store radius where ray hits something
+    float hitRadius = 0.0;
 
     for (int i = 0; i < steps; ++i) {
         actualSteps++;
         if (intercept(ray, SagA_rs)) { hitBlackHole = true; hitRadius = ray.r; break; }
         rk4Step(ray, D_LAMBDA);
-        updatePhotonIntensity(ray, D_LAMBDA); // Track intensity changes
+        updatePhotonIntensity(ray, D_LAMBDA);
 
         vec3 newPos = vec3(ray.x, ray.y, ray.z);
         if (crossesEquatorialPlane(prevPos, newPos)) { hitDisk = true; hitRadius = ray.r; break; }
@@ -522,34 +369,24 @@ void main() {
     }
 
     if (hitDisk) {
-        // Use Shakura-Sunyaev disk model for realistic rendering
         float r = length(vec3(ray.x, ray.y, ray.z));
-        float phi = atan(ray.z, ray.x); // Azimuthal angle
+        float phi = atan(ray.z, ray.x);
 
-        // Get disk physics
         vec3 diskPhysics = shakuraSunyaev(r, phi, dir);
         float temperature = diskPhysics.x;
         float dopplerBoost = diskPhysics.y;
         float redshiftFactor = diskPhysics.z;
 
-        // Blackbody color from temperature
         vec3 diskColor = blackbodyColor(temperature);
 
-        // Apply wavelength-specific filtering
         int band = int(kerrParams.wavelengthBand);
         diskColor = applyWavelengthBand(diskColor, temperature, band);
 
-        // Luminosity ∝ T^4 (Stefan-Boltzmann law)
         float luminosity = pow(temperature, 4.0);
-
-        // Apply relativistic effects
         float totalBoost = dopplerBoost * redshiftFactor;
 
-        // Kerr disks have additional brightness from frame dragging
-        float kerrBoost = 1.0 + kerrParams.spin * 0.3;
-
-        // Final intensity (including radiative transfer)
-        float intensity = luminosity * totalBoost * kerrBoost * 5.0 * ray.intensity;
+        // Schwarzschild: no Kerr boost
+        float intensity = luminosity * totalBoost * 5.0 * ray.intensity;
 
         color = vec4(diskColor * intensity, 1.0);
 
@@ -570,7 +407,7 @@ void main() {
         vec3 H = normalize(L + V);
         float spec = pow(max(dot(N, H), 0.0), 32.0);
         float intensity = ambient + diff * attenuation * 2.0 + spec * attenuation;
-        vec3 shaded = objectColor.rgb * intensity * ray.intensity; // Apply radiative transfer
+        vec3 shaded = objectColor.rgb * intensity * ray.intensity;
         color = vec4(shaded, objectColor.a);
 
     } else {
@@ -581,43 +418,36 @@ void main() {
     int vizMode = int(kerrParams.visualizationMode);
 
     if (vizMode == 1) {
-        // Gravitational redshift visualization
         if (hitDisk || hitObject) {
             float z = gravitationalRedshift(hitRadius);
             vec3 redshiftColor = redshiftToColor(z);
-            color = vec4(redshiftColor * 5.0, 1.0); // Boost brightness for visibility
+            color = vec4(redshiftColor * 5.0, 1.0);
         } else if (hitBlackHole) {
-            color = vec4(1.0, 0.0, 0.0, 1.0); // Extreme redshift (red)
+            color = vec4(1.0, 0.0, 0.0, 1.0);
         }
     } else if (vizMode == 2) {
-        // Integration steps visualization
         float stepRatio = float(actualSteps) / float(steps);
-        // Blue = few steps, Red = many steps
         vec3 stepColor = mix(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), stepRatio);
         if (hitDisk || hitObject || hitBlackHole) {
             color = vec4(stepColor * 5.0, 1.0);
         }
     } else if (vizMode == 3) {
-        // Energy conservation visualization
         if (hitDisk || hitObject) {
             float energyError = abs(ray.E - initialEnergy) / initialEnergy;
-            // Green = good conservation, Red = poor conservation
             vec3 errorColor;
             if (energyError < 1e-8) {
-                errorColor = vec3(0.0, 1.0, 0.0); // Perfect (green)
+                errorColor = vec3(0.0, 1.0, 0.0);
             } else if (energyError < 1e-6) {
-                errorColor = vec3(0.5, 1.0, 0.0); // Good (yellow-green)
+                errorColor = vec3(0.5, 1.0, 0.0);
             } else if (energyError < 1e-4) {
-                errorColor = vec3(1.0, 1.0, 0.0); // Fair (yellow)
+                errorColor = vec3(1.0, 1.0, 0.0);
             } else {
-                errorColor = vec3(1.0, 0.0, 0.0); // Poor (red)
+                errorColor = vec3(1.0, 0.0, 0.0);
             }
             color = vec4(errorColor * 5.0, 1.0);
         }
     } else if (vizMode == 4) {
-        // Carter constant (Q) conservation visualization
         if (hitDisk || hitObject) {
-            // For near-zero Q (equatorial orbits), check absolute error
             float carterError;
             if (abs(initialCarter) < 1e-6) {
                 carterError = abs(ray.Q - initialCarter);
@@ -625,23 +455,21 @@ void main() {
                 carterError = abs(ray.Q - initialCarter) / abs(initialCarter);
             }
 
-            // Color code based on error magnitude
             vec3 errorColor;
             if (carterError < 1e-8) {
-                errorColor = vec3(0.0, 1.0, 0.0); // Perfect (green)
+                errorColor = vec3(0.0, 1.0, 0.0);
             } else if (carterError < 1e-6) {
-                errorColor = vec3(0.5, 1.0, 0.5); // Good (light green)
+                errorColor = vec3(0.5, 1.0, 0.5);
             } else if (carterError < 1e-4) {
-                errorColor = vec3(1.0, 1.0, 0.0); // Fair (yellow)
+                errorColor = vec3(1.0, 1.0, 0.0);
             } else if (carterError < 1e-2) {
-                errorColor = vec3(1.0, 0.5, 0.0); // Poor (orange)
+                errorColor = vec3(1.0, 0.5, 0.0);
             } else {
-                errorColor = vec3(1.0, 0.0, 0.0); // Very poor (red)
+                errorColor = vec3(1.0, 0.0, 0.0);
             }
             color = vec4(errorColor * 5.0, 1.0);
         }
     }
-    // vizMode == 0: Normal rendering (no changes)
 
     imageStore(outImage, pix, color);
 }
