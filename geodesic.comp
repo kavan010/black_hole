@@ -1,7 +1,59 @@
+/*
+ * BLACK HOLE GEODESIC RAYTRACER
+ * ===============================
+ *
+ * This compute shader integrates light rays (null geodesics) through the curved
+ * spacetime around a non-rotating (Schwarzschild) black hole.
+ *
+ * SCHWARZSCHILD METRIC:
+ *   ds² = -(1 - rs/r) dt² + (1 - rs/r)⁻¹ dr² + r²(dθ² + sin²θ dφ²)
+ *
+ * where:
+ *   rs = 2GM/c² = Schwarzschild radius (event horizon)
+ *   For Sagittarius A*: M = 8.54×10³⁶ kg → rs = 1.269×10¹⁰ m
+ *
+ * CONSERVED QUANTITIES (constants of motion):
+ *   E = (1 - rs/r) · dt/dλ             [Energy per unit mass]
+ *   L = r² sin²θ · dφ/dλ               [Angular momentum per unit mass]
+ *
+ * These are computed once at ray initialization and preserved throughout integration.
+ *
+ * GEODESIC EQUATIONS (in terms of affine parameter λ):
+ *   d²r/dλ² = -(rs/2r²)(1-rs/r)(dt/dλ)² + (rs/2r²)/(1-rs/r)(dr/dλ)²
+ *           + r(dθ/dλ)² + r sin²θ(dφ/dλ)²
+ *
+ *   d²θ/dλ² = -(2/r)(dr/dλ)(dθ/dλ) + sinθ cosθ(dφ/dλ)²
+ *
+ *   d²φ/dλ² = -(2/r)(dr/dλ)(dφ/dλ) - (2cosθ/sinθ)(dθ/dλ)(dφ/dλ)
+ *
+ * NUMERICAL INTEGRATION:
+ *   4th-order Runge-Kutta (RK4) with fixed step size dλ = 1×10⁷ meters
+ *   Each ray is integrated until:
+ *     - Hits event horizon (r < rs)
+ *     - Hits accretion disk (crosses equatorial plane in disk region)
+ *     - Hits celestial object (sphere collision)
+ *     - Escapes to infinity (r > 10³⁰ m)
+ *     - Reaches maximum integration steps (60,000)
+ *
+ * RENDERING:
+ *   - Black hole: Pure black (light cannot escape)
+ *   - Accretion disk: Temperature-based coloring (blue-white inner, orange-red outer)
+ *   - Objects: Blinn-Phong shading with disk as light source
+ *   - Empty space: Black background
+ *
+ * OUTPUT:
+ *   HDR color values (RGBA16F) written to image texture for tone mapping pass.
+ *
+ * REFERENCES:
+ *   - Misner, Thorne, Wheeler: "Gravitation" (1973), Chapter 25
+ *   - Chandrasekhar: "Mathematical Theory of Black Holes" (1983)
+ *   - James et al.: "Gravitational Lensing by Spinning Black Holes" (2015)
+ */
+
 #version 430
 layout(local_size_x = 16, local_size_y = 16) in;
 
-layout(binding = 0, rgba8) writeonly uniform image2D outImage;
+layout(binding = 0, rgba16f) writeonly uniform image2D outImage;
 layout(std140, binding = 1) uniform Camera {
     vec3 camPos;     float _pad0;
     vec3 camRight;   float _pad1;
@@ -93,17 +145,58 @@ void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
 }
+// True 4th-order Runge-Kutta integration
+// Integrates the geodesic equations with 4th-order accuracy
 void rk4Step(inout Ray ray, float dL) {
-    vec3 k1a, k1b;
-    geodesicRHS(ray, k1a, k1b);
+    // Save initial state
+    Ray r0 = ray;
 
-    ray.r      += dL * k1a.x;
-    ray.theta  += dL * k1a.y;
-    ray.phi    += dL * k1a.z;
-    ray.dr     += dL * k1b.x;
-    ray.dtheta += dL * k1b.y;
-    ray.dphi   += dL * k1b.z;
+    // k1: Evaluate derivatives at initial point
+    vec3 k1_pos, k1_vel;
+    geodesicRHS(r0, k1_pos, k1_vel);
 
+    // k2: Evaluate at midpoint using k1
+    Ray r2 = r0;
+    r2.r      = r0.r      + 0.5 * dL * k1_pos.x;
+    r2.theta  = r0.theta  + 0.5 * dL * k1_pos.y;
+    r2.phi    = r0.phi    + 0.5 * dL * k1_pos.z;
+    r2.dr     = r0.dr     + 0.5 * dL * k1_vel.x;
+    r2.dtheta = r0.dtheta + 0.5 * dL * k1_vel.y;
+    r2.dphi   = r0.dphi   + 0.5 * dL * k1_vel.z;
+    vec3 k2_pos, k2_vel;
+    geodesicRHS(r2, k2_pos, k2_vel);
+
+    // k3: Evaluate at midpoint using k2
+    Ray r3 = r0;
+    r3.r      = r0.r      + 0.5 * dL * k2_pos.x;
+    r3.theta  = r0.theta  + 0.5 * dL * k2_pos.y;
+    r3.phi    = r0.phi    + 0.5 * dL * k2_pos.z;
+    r3.dr     = r0.dr     + 0.5 * dL * k2_vel.x;
+    r3.dtheta = r0.dtheta + 0.5 * dL * k2_vel.y;
+    r3.dphi   = r0.dphi   + 0.5 * dL * k2_vel.z;
+    vec3 k3_pos, k3_vel;
+    geodesicRHS(r3, k3_pos, k3_vel);
+
+    // k4: Evaluate at endpoint using k3
+    Ray r4 = r0;
+    r4.r      = r0.r      + dL * k3_pos.x;
+    r4.theta  = r0.theta  + dL * k3_pos.y;
+    r4.phi    = r0.phi    + dL * k3_pos.z;
+    r4.dr     = r0.dr     + dL * k3_vel.x;
+    r4.dtheta = r0.dtheta + dL * k3_vel.y;
+    r4.dphi   = r0.dphi   + dL * k3_vel.z;
+    vec3 k4_pos, k4_vel;
+    geodesicRHS(r4, k4_pos, k4_vel);
+
+    // Weighted average (RK4 formula): y_{n+1} = y_n + (h/6)(k1 + 2k2 + 2k3 + k4)
+    ray.r      = r0.r      + (dL/6.0) * (k1_pos.x + 2.0*k2_pos.x + 2.0*k3_pos.x + k4_pos.x);
+    ray.theta  = r0.theta  + (dL/6.0) * (k1_pos.y + 2.0*k2_pos.y + 2.0*k3_pos.y + k4_pos.y);
+    ray.phi    = r0.phi    + (dL/6.0) * (k1_pos.z + 2.0*k2_pos.z + 2.0*k3_pos.z + k4_pos.z);
+    ray.dr     = r0.dr     + (dL/6.0) * (k1_vel.x + 2.0*k2_vel.x + 2.0*k3_vel.x + k4_vel.x);
+    ray.dtheta = r0.dtheta + (dL/6.0) * (k1_vel.y + 2.0*k2_vel.y + 2.0*k3_vel.y + k4_vel.y);
+    ray.dphi   = r0.dphi   + (dL/6.0) * (k1_vel.z + 2.0*k2_vel.z + 2.0*k3_vel.z + k4_vel.z);
+
+    // Update Cartesian coordinates
     ray.x = ray.r * sin(ray.theta) * cos(ray.phi);
     ray.y = ray.r * sin(ray.theta) * sin(ray.phi);
     ray.z = ray.r * cos(ray.theta);
@@ -115,8 +208,10 @@ bool crossesEquatorialPlane(vec3 oldPos, vec3 newPos) {
 }
 
 void main() {
-    int WIDTH  = cam.moving ? 200 : 200;
-    int HEIGHT = cam.moving ? 150 : 150;
+    // Get actual texture dimensions from output image
+    ivec2 texSize = imageSize(outImage);
+    int WIDTH  = texSize.x;
+    int HEIGHT = texSize.y;
 
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
     if (pix.x >= WIDTH || pix.y >= HEIGHT) return;
@@ -151,21 +246,46 @@ void main() {
 
     if (hitDisk) {
         double r = length(vec3(ray.x, ray.y, ray.z)) / disk_r2;
-        vec3 diskColor = vec3(1.0, r, 0.2);
-        //r = 1.0 - abs(r - 0.5) * 2.0;
-        color = vec4(diskColor, r);
+        // HDR colors - accretion disk is extremely bright
+        // Temperature-based color: inner regions are hotter and bluer
+        float temperature = 1.0 - r;
+        vec3 diskColor = mix(
+            vec3(1.0, 0.3, 0.1),  // Cooler outer: reddish-orange
+            vec3(0.5, 0.8, 1.2),  // Hotter inner: blue-white
+            temperature
+        );
+        // Intensity falloff from inner to outer regions
+        float intensity = mix(3.0, 8.0, temperature);
+        diskColor *= intensity;
+        color = vec4(diskColor, 1.0);
 
     } else if (hitBlackHole) {
         color = vec4(0.0, 0.0, 0.0, 1.0);
 
     } else if (hitObject) {
-        // Compute shading
+        // Compute shading with HDR lighting
         vec3 P = vec3(ray.x, ray.y, ray.z);
         vec3 N = normalize(P - hitCenter);
         vec3 V = normalize(cam.camPos - P);
-        float ambient = 0.1;
-        float diff = max(dot(N, V), 0.0);
-        float intensity = ambient + (1.0 - ambient) * diff;
+
+        // Disk acts as a light source
+        vec3 diskCenter = vec3(0.0, 0.0, 0.0);
+        vec3 toDisk = diskCenter - P;
+        float diskDist = length(toDisk);
+        vec3 L = normalize(toDisk);
+
+        // Ambient light from disk glow
+        float ambient = 0.3;
+
+        // Diffuse lighting from disk
+        float diff = max(dot(N, L), 0.0);
+        float attenuation = 1.0 / (1.0 + 0.00000000001 * diskDist * diskDist);
+
+        // Specular highlight
+        vec3 H = normalize(L + V);
+        float spec = pow(max(dot(N, H), 0.0), 32.0);
+
+        float intensity = ambient + diff * attenuation * 2.0 + spec * attenuation;
         vec3 shaded = objectColor.rgb * intensity;
         color = vec4(shaded, objectColor.a);
 
