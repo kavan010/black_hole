@@ -1,5 +1,7 @@
 # **black**_**hole**
 
+> ALL RIGHTS RESERVED ® & COPYRIGHT © 2025 [Kavan010](https://github.com/kavan010)
+
 Black hole simulation project
 
 Here is the black hole raw code, everything will be inside a src bin incase you want to copy the files
