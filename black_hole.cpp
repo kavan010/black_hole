@@ -179,8 +179,9 @@ struct Engine {
             exit(EXIT_FAILURE);
         }
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); 
         window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole", nullptr, nullptr);
         if (!window) {
             cerr << "Failed to create GLFW window\n";
@@ -199,9 +200,13 @@ struct Engine {
         }
         cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
         this->shaderProgram = CreateShaderProgram();
+        
+        // NOTE: grid.vert and grid.frag files must be present
         gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
 
+        // NOTE: geodesic.comp file must be present and contain #version 430
         computeProgram = CreateComputeProgram("geodesic.comp");
+        
         glGenBuffers(1, &cameraUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
         glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW); // alloc ~128 bytes
@@ -668,7 +673,7 @@ int main() {
                         double Gforce = (G * obj.mass * obj2.mass) / (distance * distance);
 
                         double acc1 = Gforce / obj.mass;
-                        std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1, direction[2] * acc1};
+                        std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1, direction[2] * acc1}; 
                         if (Gravity) {
                             obj.velocity.x += acc[0];
                             obj.velocity.y += acc[1];
@@ -682,7 +687,6 @@ int main() {
                     }
             }
         }
-
 
 
         // ---------- GRID ------------- //
