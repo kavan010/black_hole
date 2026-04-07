@@ -18,8 +18,6 @@ I hope it works :/
 
 Edit: After completion of project -
 
-Thank you everyone for checking out the video, if you haven't it explains code in detail: https://www.youtube.com/watch?v=8-B6ryuBkCM
-
 ## **Building Requirements:**
 
 1. C++ Compiler supporting C++ 17 or newer
