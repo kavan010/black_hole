@@ -1,0 +1,23 @@
+{
+  "name": "C++ Dev with vcpkg",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-vscode.makefile-tools"
+      ]
+    }
+  },
+  "remoteUser": "vscode",
+  "runArgs": [
+    "--gpus=all",
+    "--device=/dev/dri:/dev/dri",
+    "--env=DISPLAY",
+    "--env=LIBGL_ALWAYS_INDIRECT=0",
+    "--volume=/tmp/.X11-unix:/tmp/.X11-unix"
+]
+}
