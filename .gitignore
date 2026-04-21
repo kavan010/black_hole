@@ -145,3 +145,8 @@ _deps
 
 # Vcpkg
 vcpkg_installed
+
+##### Python
+__pycache__/
+*.py[cod]
+.venv/
