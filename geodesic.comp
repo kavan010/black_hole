@@ -2,7 +2,8 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, rgba8) writeonly uniform image2D outImage;
-layout(std140, binding = 1) uniform Camera {
+layout(std140, binding = 1) uniform Camera
+{
     vec3 camPos;     float _pad0;
     vec3 camRight;   float _pad1;
     vec3 camUp;      float _pad2;
@@ -13,18 +14,20 @@ layout(std140, binding = 1) uniform Camera {
     int   _pad4;
 } cam;
 
-layout(std140, binding = 2) uniform Disk {
+layout(std140, binding = 2) uniform Disk
+{
     float disk_r1;
     float disk_r2;
     float disk_num;
     float thickness;
 };
 
-layout(std140, binding = 3) uniform Objects {
+layout(std140, binding = 3) uniform Objects
+{
     int numObjects;
     vec4 objPosRadius[16];
     vec4 objColor[16];
-    float  mass[16]; 
+    float  mass[16];
 };
 
 const float SagA_rs = 1.269e10;
@@ -36,12 +39,14 @@ vec4 objectColor = vec4(0.0);
 vec3 hitCenter = vec3(0.0);
 float hitRadius = 0.0;
 
-struct Ray {
+struct Ray
+{
     float x, y, z, r, theta, phi;
     float dr, dtheta, dphi;
     float E, L;
 };
-Ray initRay(vec3 pos, vec3 dir) {
+Ray initRay(vec3 pos, vec3 dir)
+{
     Ray ray;
     ray.x = pos.x; ray.y = pos.y; ray.z = pos.z;
     ray.r = length(pos);
@@ -61,16 +66,20 @@ Ray initRay(vec3 pos, vec3 dir) {
     return ray;
 }
 
-bool intercept(Ray ray, float rs) {
+bool intercept(Ray ray, float rs)
+{
     return ray.r <= rs;
 }
 // Returns true on hit, captures center, radius, and base color
-bool interceptObject(Ray ray) {
+bool interceptObject(Ray ray)
+{
     vec3 P = vec3(ray.x, ray.y, ray.z);
-    for (int i = 0; i < numObjects; ++i) {
+    for (int i = 0; i < numObjects; ++i)
+    {
         vec3 center = objPosRadius[i].xyz;
         float radius = objPosRadius[i].w;
-        if (distance(P, center) <= radius) {
+        if (distance(P, center) <= radius)
+        {
             objectColor = objColor[i];
             hitCenter = center;
             hitRadius = radius;
@@ -80,7 +89,8 @@ bool interceptObject(Ray ray) {
     return false;
 }
 
-void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
+void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2)
+{
     float r = ray.r, theta = ray.theta;
     float dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi;
     float f = 1.0 - SagA_rs / r;
@@ -93,7 +103,8 @@ void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
 }
-void rk4Step(inout Ray ray, float dL) {
+void rk4Step(inout Ray ray, float dL)
+{
     vec3 k1a, k1b;
     geodesicRHS(ray, k1a, k1b);
 
@@ -108,13 +119,15 @@ void rk4Step(inout Ray ray, float dL) {
     ray.y = ray.r * sin(ray.theta) * sin(ray.phi);
     ray.z = ray.r * cos(ray.theta);
 }
-bool crossesEquatorialPlane(vec3 oldPos, vec3 newPos) {
+bool crossesEquatorialPlane(vec3 oldPos, vec3 newPos)
+{
     bool crossed = (oldPos.y * newPos.y < 0.0);
     float r = length(vec2(newPos.x, newPos.z));
     return crossed && (r >= disk_r1 && r <= disk_r2);
 }
 
-void main() {
+void main()
+{
     int WIDTH  = cam.moving ? 200 : 200;
     int HEIGHT = cam.moving ? 150 : 150;
 
@@ -137,7 +150,8 @@ void main() {
 
     int steps = cam.moving ? 60000 : 60000;
 
-    for (int i = 0; i < steps; ++i) {
+    for (int i = 0; i < steps; ++i)
+    {
         if (intercept(ray, SagA_rs)) { hitBlackHole = true; break; }
         rk4Step(ray, D_LAMBDA);
         lambda += D_LAMBDA;
@@ -149,16 +163,21 @@ void main() {
         if (ray.r > ESCAPE_R) break;
     }
 
-    if (hitDisk) {
+    if (hitDisk)
+    {
         double r = length(vec3(ray.x, ray.y, ray.z)) / disk_r2;
         vec3 diskColor = vec3(1.0, r, 0.2);
         //r = 1.0 - abs(r - 0.5) * 2.0;
         color = vec4(diskColor, r);
 
-    } else if (hitBlackHole) {
+    }
+    else if (hitBlackHole)
+    {
         color = vec4(0.0, 0.0, 0.0, 1.0);
 
-    } else if (hitObject) {
+    }
+    else if (hitObject)
+    {
         // Compute shading
         vec3 P = vec3(ray.x, ray.y, ray.z);
         vec3 N = normalize(P - hitCenter);
@@ -169,7 +188,9 @@ void main() {
         vec3 shaded = objectColor.rgb * intensity;
         color = vec4(shaded, objectColor.a);
 
-    } else {
+    }
+    else
+    {
         color = vec4(0.0);
     }
 
