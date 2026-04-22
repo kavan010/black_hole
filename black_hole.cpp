@@ -70,7 +70,7 @@ struct Camera {
         float dx = float(x - lastX);
         float dy = float(y - lastY);
 
-        if (dragging && panning) {
+        while (dragging && panning) {
             // Pan: Shift + Left or Middle Mouse
             // Disable panning to keep camera centered on black hole
         }
