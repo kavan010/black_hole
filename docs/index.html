@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>black_hole</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    touch-action: none;
+    cursor: grab;
+  }
+  canvas:active { cursor: grabbing; }
+  #fallback {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #888;
+    font-family: monospace;
+    font-size: 14px;
+    text-align: center;
+    padding: 20px;
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="fallback">WebGL is not available in this browser.</div>
+
+<script>
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+
+if (!gl) {
+  canvas.style.display = 'none';
+  document.getElementById('fallback').style.display = 'flex';
+} else {
+  init(gl);
+}
+
+function init(gl) {
+
+const vertSrc = `
+attribute vec2 a_pos;
+void main() {
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+
+const fragSrc = `
+precision highp float;
+
+uniform vec2 u_resolution;
+uniform vec3 u_camPos;
+uniform vec3 u_camRight;
+uniform vec3 u_camUp;
+uniform vec3 u_camForward;
+uniform float u_fov;
+uniform float u_time;
+
+#define PI 3.14159265359
+#define STEPS 280
+#define RS 1.0
+#define DISK_INNER 2.4
+#define DISK_OUTER 9.0
+
+// Hash / noise for disk turbulence and starfield
+float hash(vec3 p) {
+  p = fract(p * 0.3183099 + 0.1);
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float noise(vec3 x) {
+  vec3 i = floor(x);
+  vec3 f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash(i+vec3(0,0,0)), hash(i+vec3(1,0,0)), f.x),
+        mix(hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x),
+        mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y),
+    f.z
+  );
+}
+
+float fbm(vec3 p) {
+  float v = 0.0;
+  float a = 0.5;
+  for (int i = 0; i < 4; i++) {
+    v += a * noise(p);
+    p *= 2.02;
+    a *= 0.5;
+  }
+  return v;
+}
+
+// distant starfield, sampled by direction
+vec3 starfield(vec3 dir) {
+  vec3 p = dir * 60.0;
+  float n = hash(floor(p));
+  float core = step(0.9975, n);
+  float tw = 0.6 + 0.4 * sin(u_time * 1.5 + n * 200.0);
+  vec3 col = vec3(0.85, 0.88, 1.0) * core * tw;
+  // faint milky haze
+  float haze = smoothstep(0.0, 1.0, fbm(dir * 3.0)) * 0.025;
+  return col + vec3(0.05, 0.04, 0.08) * haze;
+}
+
+// accretion disk color: hotter/bluer near the inner edge, cooler/redder outward,
+// with a doppler-style brightness boost on the side spinning toward the viewer
+vec4 diskColor(vec3 hitPos, vec3 viewDir) {
+  float r = length(hitPos.xz);
+  float t = clamp((r - DISK_INNER) / (DISK_OUTER - DISK_INNER), 0.0, 1.0);
+
+  vec3 hot  = vec3(1.0, 0.95, 0.85);
+  vec3 mid  = vec3(1.0, 0.55, 0.18);
+  vec3 cool = vec3(0.55, 0.12, 0.05);
+  vec3 base = mix(hot, mix(mid, cool, t), t);
+
+  float ang = atan(hitPos.z, hitPos.x);
+  float orbitalSpeed = 1.0 / sqrt(r); // keplerian-ish falloff
+  float swirl = ang * 2.0 - u_time * orbitalSpeed * 1.4;
+  float turb = fbm(vec3(r * 1.8, swirl * 1.3, u_time * 0.05));
+  float band = 0.65 + 0.6 * turb;
+
+  // doppler beaming approximation: tangential velocity direction vs view
+  vec3 tangent = normalize(vec3(-hitPos.z, 0.0, hitPos.x));
+  float vmag = clamp(1.4 / sqrt(r), 0.0, 0.95);
+  float approach = dot(tangent, -viewDir) * vmag;
+  float beam = pow(1.0 + approach, 3.0);
+
+  float edgeFade = smoothstep(0.0, 0.12, t) * smoothstep(0.0, 0.18, 1.0 - t);
+  float density = band * edgeFade;
+
+  vec3 col = base * band * beam * 1.6;
+  return vec4(col, density);
+}
+
+// returns 1 if inside event horizon
+bool insideHorizon(vec3 p) {
+  return length(p) < RS;
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+
+  float scale = tan(u_fov * 0.5);
+  vec3 rd = normalize(u_camForward + (uv.x * scale * 2.0) * u_camRight + (uv.y * scale * 2.0) * u_camUp);
+  vec3 ro = u_camPos;
+
+  vec3 pos = ro;
+  vec3 dir = rd;
+
+  vec3 color = vec3(0.0);
+  float alphaAccum = 0.0;
+  bool captured = false;
+  float prevY = pos.y;
+
+  float stepLen = 0.16;
+
+  for (int i = 0; i < STEPS; i++) {
+    float r = length(pos);
+    if (r < RS * 1.001) { captured = true; break; }
+    if (r > 40.0) break;
+
+    // light bending: deflect direction toward center, strength ~ rs / r^2,
+    // integrated along the ray as a cheap stand-in for full geodesic RK4
+    vec3 toCenter = -pos;
+    float rr = max(r, 0.001);
+    vec3 accel = toCenter / (rr*rr*rr) * RS * 1.5;
+
+    dir = normalize(dir + accel * stepLen);
+    vec3 nextPos = pos + dir * stepLen;
+
+    // accretion disk crossing test (thin disk in y=0 plane)
+    if (prevY * nextPos.y < 0.0 || abs(nextPos.y) < 0.02) {
+      float rad = length(nextPos.xz);
+      if (rad > DISK_INNER && rad < DISK_OUTER) {
+        vec4 dc = diskColor(nextPos, dir);
+        float a = dc.a * (1.0 - alphaAccum);
+        color += dc.rgb * a;
+        alphaAccum += a;
+      }
+    }
+
+    prevY = nextPos.y;
+    pos = nextPos;
+
+    stepLen = clamp(r * 0.022, 0.018, 0.22);
+
+    if (alphaAccum > 0.97) break;
+  }
+
+  vec3 bg = captured ? vec3(0.0) : starfield(dir);
+  color += bg * (1.0 - alphaAccum);
+
+  // photon-ring glow boost right at the horizon silhouette
+  float rFinal = length(pos);
+  if (!captured) {
+    float ringGlow = smoothstep(RS * 1.5, RS * 1.02, rFinal) * 0.5;
+    color += vec3(1.0, 0.75, 0.45) * ringGlow * (1.0 - alphaAccum);
+  }
+
+  // gentle vignette
+  float vig = 1.0 - 0.35 * pow(length(uv), 1.6);
+  color *= vig;
+
+  // tonemap
+  color = color / (1.0 + color);
+  color = pow(color, vec3(0.85));
+
+  gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s));
+  }
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  console.error(gl.getProgramInfoLog(prog));
+}
+gl.useProgram(prog);
+
+const quad = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1,-1,  1,-1,  -1,1,
+  -1,1,   1,-1,   1,1
+]), gl.STATIC_DRAW);
+const posLoc = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(posLoc);
+gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+const u_resolution = gl.getUniformLocation(prog, 'u_resolution');
+const u_camPos = gl.getUniformLocation(prog, 'u_camPos');
+const u_camRight = gl.getUniformLocation(prog, 'u_camRight');
+const u_camUp = gl.getUniformLocation(prog, 'u_camUp');
+const u_camForward = gl.getUniformLocation(prog, 'u_camForward');
+const u_fov = gl.getUniformLocation(prog, 'u_fov');
+const u_time = gl.getUniformLocation(prog, 'u_time');
+
+// ---- orbit camera state ----
+let azimuth = 0.6;
+let elevation = 0.35;
+let radius = 14.0;
+const minRadius = 4.0, maxRadius = 32.0;
+const minElev = -1.45, maxElev = 1.45;
+
+let dragging = false;
+let lastX = 0, lastY = 0;
+let velAz = 0, velEl = 0;
+let autoSpin = true;
+
+function pointerDown(x, y) {
+  dragging = true;
+  autoSpin = false;
+  lastX = x; lastY = y;
+}
+function pointerMove(x, y) {
+  if (!dragging) return;
+  const dx = x - lastX;
+  const dy = y - lastY;
+  velAz = -dx * 0.0045;
+  velEl = dy * 0.0045;
+  azimuth += velAz;
+  elevation = Math.max(minElev, Math.min(maxElev, elevation + velEl));
+  lastX = x; lastY = y;
+}
+function pointerUp() { dragging = false; }
+
+canvas.addEventListener('mousedown', e => pointerDown(e.clientX, e.clientY));
+window.addEventListener('mousemove', e => pointerMove(e.clientX, e.clientY));
+window.addEventListener('mouseup', pointerUp);
+
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) pointerDown(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive:true});
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length === 1) pointerMove(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive:true});
+canvas.addEventListener('touchend', pointerUp);
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  radius = Math.max(minRadius, Math.min(maxRadius, radius + e.deltaY * 0.012));
+}, {passive:false});
+
+// pinch zoom
+let lastPinchDist = null;
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (lastPinchDist !== null) {
+      radius = Math.max(minRadius, Math.min(maxRadius, radius - (dist - lastPinchDist) * 0.03));
+    }
+    lastPinchDist = dist;
+  }
+}, {passive:true});
+canvas.addEventListener('touchend', () => { lastPinchDist = null; });
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+let startTime = performance.now();
+
+function frame() {
+  const t = (performance.now() - startTime) / 1000.0;
+
+  if (autoSpin) azimuth += 0.0009;
+  if (!dragging) {
+    azimuth += velAz;
+    elevation = Math.max(minElev, Math.min(maxElev, elevation + velEl));
+    velAz *= 0.94; velEl *= 0.94;
+  }
+
+  const camX = radius * Math.cos(elevation) * Math.sin(azimuth);
+  const camY = radius * Math.sin(elevation);
+  const camZ = radius * Math.cos(elevation) * Math.cos(azimuth);
+  const camPos = [camX, camY, camZ];
+
+  const target = [0, 0, 0];
+  let fwd = [target[0]-camPos[0], target[1]-camPos[1], target[2]-camPos[2]];
+  const flen = Math.hypot(fwd[0], fwd[1], fwd[2]);
+  fwd = [fwd[0]/flen, fwd[1]/flen, fwd[2]/flen];
+
+  const worldUp = [0, 1, 0];
+  let right = [
+    fwd[1]*worldUp[2] - fwd[2]*worldUp[1],
+    fwd[2]*worldUp[0] - fwd[0]*worldUp[2],
+    fwd[0]*worldUp[1] - fwd[1]*worldUp[0]
+  ];
+  const rlen = Math.hypot(right[0], right[1], right[2]) || 1.0;
+  right = [right[0]/rlen, right[1]/rlen, right[2]/rlen];
+
+  const up = [
+    right[1]*fwd[2] - right[2]*fwd[1],
+    right[2]*fwd[0] - right[0]*fwd[2],
+    right[0]*fwd[1] - right[1]*fwd[0]
+  ];
+
+  gl.uniform2f(u_resolution, canvas.width, canvas.height);
+  gl.uniform3f(u_camPos, camPos[0], camPos[1], camPos[2]);
+  gl.uniform3f(u_camRight, right[0], right[1], right[2]);
+  gl.uniform3f(u_camUp, up[0], up[1], up[2]);
+  gl.uniform3f(u_camForward, fwd[0], fwd[1], fwd[2]);
+  gl.uniform1f(u_fov, 0.9);
+  gl.uniform1f(u_time, t);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  requestAnimationFrame(frame);
+}
+
+frame();
+
+}
+</script>
+</body>
+</html>

@@ -4,6 +4,9 @@ project(BlackHoleSim)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if (MSVC)
+  add_compile_options(/utf-8)
+endif()
 # Dependencies
 find_package(GLEW REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
