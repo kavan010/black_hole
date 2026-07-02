@@ -28,9 +28,10 @@ layout(std140, binding = 3) uniform Objects {
 };
 
 const float SagA_rs = 1.269e10;
-const float D_LAMBDA = 1e7;
-const double ESCAPE_R = 1e30;
-
+const double ESCAPE_R = 1e12; // Reduced due to limitness of the simulation space
+// --- Adaptive Step Parameters ---
+const float MIN_STEP = 1e6;
+const float MAX_STEP = 1e8;
 // Globals to store hit info
 vec4 objectColor = vec4(0.0);
 vec3 hitCenter = vec3(0.0);
@@ -128,31 +129,41 @@ void main() {
     Ray ray = initRay(cam.camPos, dir);
 
     vec4 color = vec4(0.0);
-    vec3 prevPos = vec3(ray.x, ray.y, ray.z);
     float lambda = 0.0;
 
     bool hitBlackHole = false;
     bool hitDisk      = false;
     bool hitObject    = false;
 
-    int steps = cam.moving ? 60000 : 60000;
+    int max_steps = 25000; 
 
-    for (int i = 0; i < steps; ++i) {
+    vec3 prevPos = vec3(ray.x, ray.y, ray.z);
+
+    for (int i = 0; i < max_steps; ++i) {
         if (intercept(ray, SagA_rs)) { hitBlackHole = true; break; }
-        rk4Step(ray, D_LAMBDA);
-        lambda += D_LAMBDA;
+
+        // ---- ADAPTIVE STEP SIZE CALCULATION ----
+        float allowed_step = ray.r * 0.05; 
+        float current_dL = clamp(allowed_step, MIN_STEP, MAX_STEP);
+        // ----------------------------------------
+        
+        rk4Step(ray, current_dL);
+        lambda += current_dL;
 
         vec3 newPos = vec3(ray.x, ray.y, ray.z);
         if (crossesEquatorialPlane(prevPos, newPos)) { hitDisk = true; break; }
         if (interceptObject(ray)) { hitObject = true; break; }
         prevPos = newPos;
-        if (ray.r > ESCAPE_R) break;
+        
+        // ---- SMART EARLY EXIT ----
+        if (ray.r > ESCAPE_R && ray.dr > 0.0) {
+            break; 
+        }
     }
 
     if (hitDisk) {
         double r = length(vec3(ray.x, ray.y, ray.z)) / disk_r2;
         vec3 diskColor = vec3(1.0, r, 0.2);
-        //r = 1.0 - abs(r - 0.5) * 2.0;
         color = vec4(diskColor, r);
 
     } else if (hitBlackHole) {

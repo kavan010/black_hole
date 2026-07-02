@@ -655,31 +655,38 @@ int main() {
         lastTime     = now;
 
         // Gravity
-        for (auto& obj : objects) {
-            for (auto& obj2 : objects) {
-                if (&obj == &obj2) continue; // skip self-interaction
-                 float dx  = obj2.posRadius.x - obj.posRadius.x;
-                 float dy = obj2.posRadius.y - obj.posRadius.y;
-                 float dz = obj2.posRadius.z - obj.posRadius.z;
-                 float distance = sqrt(dx * dx + dy * dy + dz * dz);
-                 if (distance > 0) {
-                        vector<double> direction = {dx / distance, dy / distance, dz / distance};
-                        //distance *= 1000;
+        if (Gravity) {
+            for (auto& obj : objects) {
+                glm::dvec3 totalAccel(0.0); 
+                glm::dvec3 posObj = glm::dvec3(obj.posRadius.x, obj.posRadius.y, obj.posRadius.z);
+                for (const auto& obj2 : objects) {
+                    if (&obj == &obj2) continue; // skip self-interaction
+                    
+                    glm::dvec3 posObj2 = glm::dvec3(obj2.posRadius.x, obj2.posRadius.y, obj2.posRadius.z);
+                    glm::dvec3 diff = posObj2 - posObj;
+
+                    double distance = glm::length(diff);
+
+                    if (distance > 0.0) {
+                        glm::dvec3 direction = diff / distance;
+
                         double Gforce = (G * obj.mass * obj2.mass) / (distance * distance);
 
-                        double acc1 = Gforce / obj.mass;
-                        std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1, direction[2] * acc1};
-                        if (Gravity) {
-                            obj.velocity.x += acc[0];
-                            obj.velocity.y += acc[1];
-                            obj.velocity.z += acc[2];
-
-                            obj.posRadius.x += obj.velocity.x;
-                            obj.posRadius.y += obj.velocity.y;
-                            obj.posRadius.z += obj.velocity.z;
-                            cout << "velocity: " <<obj.velocity.x<<", " <<obj.velocity.y<<", " <<obj.velocity.z<<endl;
-                        }
+                        // F = G * m1 * m2 / r^2
+                        double accMag = (G * obj2.mass) / (distance * distance);
+                        
+                        totalAccel += direction * accMag;
                     }
+                }
+
+                // Integration considering Delta Time
+                obj.velocity.x += totalAccel.x * dt;
+                obj.velocity.y += totalAccel.y * dt;
+                obj.velocity.z += totalAccel.z * dt;
+
+                obj.posRadius.x += obj.velocity.x * dt;
+                obj.posRadius.y += obj.velocity.y * dt;
+                obj.posRadius.z += obj.velocity.z * dt;
             }
         }
 
