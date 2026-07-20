@@ -547,9 +547,21 @@ struct Engine {
         glDisable(GL_BLEND);
         glDisable(GL_DEPTH_TEST);
 
+        // Split the pass into horizontal tiles and flush between them so no
+        // single GPU command buffer runs long enough to trip the OS watchdog
+        // (macOS kills GL work that hangs the GPU for roughly 2 seconds).
+        const int tiles = 10;
+        glEnable(GL_SCISSOR_TEST);
         glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+        for (int t = 0; t < tiles; ++t) {
+            int y0 = ch * t / tiles;
+            int y1 = ch * (t + 1) / tiles;
+            glScissor(0, y0, cw, y1 - y0);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glFlush();
+        }
         glBindVertexArray(0);
+        glDisable(GL_SCISSOR_TEST);
 
         if (blendWasEnabled) glEnable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);

@@ -37,7 +37,9 @@ layout(std140) uniform Objects {
 
 const float SagA_rs = 1.269e10;
 const float D_LAMBDA = 1e7;
-const float ESCAPE_R = 1e30;
+// Rays are considered escaped once they pass the camera's maximum zoom-out
+// distance (1e12); integrating out to 1e30 would waste millions of steps.
+const float ESCAPE_R = 2e12;
 
 // Globals to store hit info
 vec4 objectColor = vec4(0.0);
@@ -145,12 +147,17 @@ void main() {
     bool hitDisk      = false;
     bool hitObject    = false;
 
-    int steps = cam.moving ? 60000 : 60000;
+    int steps = cam.moving ? 20000 : 60000;
 
     for (int i = 0; i < steps; ++i) {
         if (intercept(ray, SagA_rs)) { hitBlackHole = true; break; }
-        rk4Step(ray, D_LAMBDA);
-        lambda += D_LAMBDA;
+        // Adaptive step: near the hole (small r) step at D_LAMBDA for accurate
+        // lensing; far away, where spacetime is nearly flat, take larger steps.
+        // Keeps each ray to a few thousand steps so the whole frame stays well
+        // under the macOS GPU watchdog limit.
+        float dL = D_LAMBDA * clamp(ray.r / (2.0 * SagA_rs), 1.0, 50.0);
+        rk4Step(ray, dL);
+        lambda += dL;
 
         vec3 newPos = vec3(ray.x, ray.y, ray.z);
         if (crossesEquatorialPlane(prevPos, newPos)) { hitDisk = true; break; }
