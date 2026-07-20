@@ -569,7 +569,9 @@ struct Engine {
         if (blendWasEnabled) glEnable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, WIDTH, HEIGHT);
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        glViewport(0, 0, fbWidth, fbHeight);
     }
     void uploadCameraUBO(const Camera& cam) {
         struct UBOData {
@@ -771,7 +773,12 @@ int main() {
         engine.drawGrid(viewProj);
 
         // ---------- RUN RAYTRACER ------------- //
-        glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
+        // Use the framebuffer size, not the window size: on Retina/HiDPI
+        // displays the framebuffer is larger, and a WIDTHxHEIGHT viewport
+        // would only cover the bottom-left quarter of the window.
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(engine.window, &fbWidth, &fbHeight);
+        glViewport(0, 0, fbWidth, fbHeight);
         if (engine.useCompute) {
             engine.dispatchCompute(camera);
         } else {
