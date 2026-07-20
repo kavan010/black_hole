@@ -35,7 +35,10 @@ struct Camera {
     float minRadius = 1e10f, maxRadius = 1e12f;
 
     float azimuth = 0.0f;
-    float elevation = M_PI / 2.0f;
+    // Start slightly above the equatorial plane: at exactly pi/2 the camera
+    // sits level with (and inside the outer edge of) the accretion disk, so
+    // the first frame is a wall of disk instead of the classic lensed view.
+    float elevation = 1.3f;
 
     float orbitSpeed = 0.01f;
     float panSpeed = 0.01f;
