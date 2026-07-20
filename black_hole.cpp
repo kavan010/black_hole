@@ -35,7 +35,10 @@ struct Camera {
     float minRadius = 1e10f, maxRadius = 1e12f;
 
     float azimuth = 0.0f;
-    float elevation = M_PI / 2.0f;
+    // Start slightly above the equatorial plane: at exactly pi/2 the camera
+    // sits level with (and inside the outer edge of) the accretion disk, so
+    // the first frame is a wall of disk instead of the classic lensed view.
+    float elevation = 1.3f;
 
     float orbitSpeed = 0.01f;
     float panSpeed = 0.01f;
@@ -156,6 +159,10 @@ struct Engine {
     GLuint texture;
     GLuint shaderProgram;
     GLuint computeProgram = 0;
+    // -- Fragment-shader fallback for platforms without GL 4.3 compute (macOS) -- //
+    bool useCompute = false;
+    GLuint geodesicProgram = 0;
+    GLuint geodesicFBO = 0;
     // -- UBOs -- //
     GLuint cameraUBO = 0;
     GLuint diskUBO = 0;
@@ -179,8 +186,9 @@ struct Engine {
             exit(EXIT_FAILURE);
         }
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); 
         window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole", nullptr, nullptr);
         if (!window) {
             cerr << "Failed to create GLFW window\n";
@@ -199,9 +207,29 @@ struct Engine {
         }
         cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
         this->shaderProgram = CreateShaderProgram();
+        
+        // NOTE: grid.vert and grid.frag files must be present
         gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
 
-        computeProgram = CreateComputeProgram("geodesic.comp");
+        // Compute shaders require OpenGL 4.3, which macOS never shipped (it is
+        // capped at 4.1). Detect support at runtime: use the compute shader
+        // where available, otherwise fall back to an equivalent fragment-shader
+        // pass rendered into an offscreen framebuffer.
+        useCompute = (GLEW_VERSION_4_3 != 0);
+        if (useCompute) {
+            // NOTE: geodesic.comp file must be present and contain #version 430
+            computeProgram = CreateComputeProgram("geodesic.comp");
+        } else {
+            cout << "[INFO] OpenGL 4.3 compute shaders unavailable; using fragment-shader raytracer (geodesic.frag)\n";
+            geodesicProgram = CreateShaderProgram("fullscreen.vert", "geodesic.frag");
+            // GLSL 4.10 can't declare layout(binding=N) on uniform blocks, so
+            // bind them here to match the compute shader's binding points.
+            glUniformBlockBinding(geodesicProgram, glGetUniformBlockIndex(geodesicProgram, "Camera"), 1);
+            glUniformBlockBinding(geodesicProgram, glGetUniformBlockIndex(geodesicProgram, "Disk"), 2);
+            glUniformBlockBinding(geodesicProgram, glGetUniformBlockIndex(geodesicProgram, "Objects"), 3);
+            glGenFramebuffers(1, &geodesicFBO);
+        }
+
         glGenBuffers(1, &cameraUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
         glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW); // alloc ~128 bytes
@@ -494,6 +522,57 @@ struct Engine {
         // 5) sync
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     }
+    // Fragment-shader equivalent of dispatchCompute for GL < 4.3 (macOS):
+    // renders the geodesic raytracer into the same low-res texture via an FBO.
+    void renderGeodesicFragment(const Camera& cam) {
+        int cw = cam.moving ? COMPUTE_WIDTH  : 200;
+        int ch = cam.moving ? COMPUTE_HEIGHT : 150;
+
+        // 1) reallocate the texture if needed (same as compute path)
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cw, ch, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+        // 2) render into the texture through an FBO
+        glBindFramebuffer(GL_FRAMEBUFFER, geodesicFBO);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, texture, 0);
+        glViewport(0, 0, cw, ch);
+
+        glUseProgram(geodesicProgram);
+        uploadCameraUBO(cam);
+        uploadDiskUBO();
+        uploadObjectsUBO(objects);
+
+        // The compute path overwrites every texel; disable blending so the
+        // fragment path does too, then restore it for the overlay draw.
+        GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+
+        // Split the pass into horizontal tiles and flush between them so no
+        // single GPU command buffer runs long enough to trip the OS watchdog
+        // (macOS kills GL work that hangs the GPU for roughly 2 seconds).
+        const int tiles = 10;
+        glEnable(GL_SCISSOR_TEST);
+        glBindVertexArray(quadVAO);
+        for (int t = 0; t < tiles; ++t) {
+            int y0 = ch * t / tiles;
+            int y1 = ch * (t + 1) / tiles;
+            glScissor(0, y0, cw, y1 - y0);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glFlush();
+        }
+        glBindVertexArray(0);
+        glDisable(GL_SCISSOR_TEST);
+
+        if (blendWasEnabled) glEnable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        glViewport(0, 0, fbWidth, fbHeight);
+    }
     void uploadCameraUBO(const Camera& cam) {
         struct UBOData {
             vec3 pos; float _pad0;
@@ -502,7 +581,7 @@ struct Engine {
             vec3 forward; float _pad3;
             float tanHalfFov;
             float aspect;
-            bool moving;
+            int moving; // std140 bool is 4 bytes; C++ bool is 1, so use int
             int _pad4;
         } data;
         vec3 fwd = normalize(cam.target - cam.position());
@@ -516,7 +595,7 @@ struct Engine {
         data.forward = fwd;
         data.tanHalfFov = tan(radians(60.0f * 0.5f));
         data.aspect = float(WIDTH) / float(HEIGHT);
-        data.moving = cam.dragging || cam.panning;
+        data.moving = (cam.dragging || cam.panning) ? 1 : 0;
 
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(UBOData), &data);
@@ -668,7 +747,7 @@ int main() {
                         double Gforce = (G * obj.mass * obj2.mass) / (distance * distance);
 
                         double acc1 = Gforce / obj.mass;
-                        std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1, direction[2] * acc1};
+                        std::vector<double> acc = {direction[0] * acc1, direction[1] * acc1, direction[2] * acc1}; 
                         if (Gravity) {
                             obj.velocity.x += acc[0];
                             obj.velocity.y += acc[1];
@@ -684,7 +763,6 @@ int main() {
         }
 
 
-
         // ---------- GRID ------------- //
         // 2) rebuild grid mesh on CPU
         engine.generateGrid(objects);
@@ -695,8 +773,17 @@ int main() {
         engine.drawGrid(viewProj);
 
         // ---------- RUN RAYTRACER ------------- //
-        glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
-        engine.dispatchCompute(camera);
+        // Use the framebuffer size, not the window size: on Retina/HiDPI
+        // displays the framebuffer is larger, and a WIDTHxHEIGHT viewport
+        // would only cover the bottom-left quarter of the window.
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(engine.window, &fbWidth, &fbHeight);
+        glViewport(0, 0, fbWidth, fbHeight);
+        if (engine.useCompute) {
+            engine.dispatchCompute(camera);
+        } else {
+            engine.renderGeodesicFragment(camera);
+        }
         engine.drawFullScreenQuad();
 
         // 6) present to screen

@@ -61,6 +61,23 @@ sudo apt install build-essential cmake \
 
 This provides the GLEW, GLFW, GLM and OpenGL development files so `find_package(...)` calls in `CMakeLists.txt` can locate the libraries. After installing, run the `cmake -B build -S .` and `cmake --build build` commands as shown in the Build Instructions.
 
+## **Running on macOS (Apple Silicon):**
+
+macOS only supports OpenGL up to 4.1, which has no compute shaders — so `black_hole.cpp` detects this at startup and runs the same geodesic raytracer as a fragment shader (`geodesic.frag`) instead. No configuration needed; Windows and Linux keep using `geodesic.comp` exactly as before.
+
+Setup with [Homebrew](https://brew.sh), from the repository root:
+
+```bash
+brew install cmake glfw glew glm
+cmake -B build -S . -DCMAKE_PREFIX_PATH=/opt/homebrew
+cmake --build build
+cd build && ./BlackHole3D
+```
+
+Tested on a MacBook Pro (Apple M4 Pro, 24 GB RAM) running macOS 26.5: about 90 ms per frame (~11 FPS) at the default 200x150 render resolution. The frame is drawn in tiles with adaptive integration steps to stay under the macOS GPU watchdog, which would otherwise terminate long-running GPU work.
+
+![BlackHole3D running on macOS (M4 Pro)](screenshots/macos-m4.png)
+
 ## **How the code works:**
 for 2D: simple, just run 2D_lensing.cpp with the nessesary dependencies installed.
 
