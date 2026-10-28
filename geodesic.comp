@@ -45,17 +45,22 @@ Ray initRay(vec3 pos, vec3 dir) {
     Ray ray;
     ray.x = pos.x; ray.y = pos.y; ray.z = pos.z;
     ray.r = length(pos);
-    ray.theta = acos(pos.z / ray.r);
-    ray.phi = atan(pos.y, pos.x);
+    // Polar axis = y (the disk normal). The camera orbits around y with its
+    // elevation clamped away from the poles, so sin(theta) never reaches 0.
+    // (With z as the polar axis every ray produced NaN whenever the camera
+    // was dragged onto the z axis, blanking the screen.)
+    ray.theta = acos(pos.y / ray.r);
+    ray.phi = atan(pos.z, pos.x);
 
     float dx = dir.x, dy = dir.y, dz = dir.z;
-    ray.dr     = sin(ray.theta)*cos(ray.phi)*dx + sin(ray.theta)*sin(ray.phi)*dy + cos(ray.theta)*dz;
-    ray.dtheta = (cos(ray.theta)*cos(ray.phi)*dx + cos(ray.theta)*sin(ray.phi)*dy - sin(ray.theta)*dz) / ray.r;
-    ray.dphi   = (-sin(ray.phi)*dx + cos(ray.phi)*dy) / (ray.r * sin(ray.theta));
+    ray.dr     = sin(ray.theta)*cos(ray.phi)*dx + cos(ray.theta)*dy + sin(ray.theta)*sin(ray.phi)*dz;
+    ray.dtheta = (cos(ray.theta)*cos(ray.phi)*dx - sin(ray.theta)*dy + cos(ray.theta)*sin(ray.phi)*dz) / ray.r;
+    ray.dphi   = (-sin(ray.phi)*dx + cos(ray.phi)*dz) / (ray.r * sin(ray.theta));
 
     ray.L = ray.r * ray.r * sin(ray.theta) * ray.dphi;
     float f = 1.0 - SagA_rs / ray.r;
-    float dt_dL = sqrt((ray.dr*ray.dr)/f + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
+    // Null condition  f*(dt/dL)^2 = (dr/dL)^2 / f + r^2 (dtheta^2 + sin^2(theta) dphi^2)
+    float dt_dL = sqrt((ray.dr*ray.dr)/(f*f) + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi)/f);
     ray.E = f * dt_dL;
 
     return ray;
@@ -89,24 +94,35 @@ void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     d1 = vec3(dr, dtheta, dphi);
     d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL
          + (SagA_rs / (2.0 * r*r * f)) * dr * dr
-         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
+         + (r - SagA_rs) * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
 }
+Ray addState(Ray base, vec3 d1, vec3 d2, float h) {
+    Ray s = base;
+    s.r      += h * d1.x;
+    s.theta  += h * d1.y;
+    s.phi    += h * d1.z;
+    s.dr     += h * d2.x;
+    s.dtheta += h * d2.y;
+    s.dphi   += h * d2.z;
+    return s;
+}
+// Classical 4th-order Runge-Kutta (the previous version was a single Euler step)
 void rk4Step(inout Ray ray, float dL) {
-    vec3 k1a, k1b;
+    vec3 k1a, k1b, k2a, k2b, k3a, k3b, k4a, k4b;
     geodesicRHS(ray, k1a, k1b);
+    geodesicRHS(addState(ray, k1a, k1b, 0.5 * dL), k2a, k2b);
+    geodesicRHS(addState(ray, k2a, k2b, 0.5 * dL), k3a, k3b);
+    geodesicRHS(addState(ray, k3a, k3b, dL),       k4a, k4b);
 
-    ray.r      += dL * k1a.x;
-    ray.theta  += dL * k1a.y;
-    ray.phi    += dL * k1a.z;
-    ray.dr     += dL * k1b.x;
-    ray.dtheta += dL * k1b.y;
-    ray.dphi   += dL * k1b.z;
+    vec3 d1 = (k1a + 2.0*k2a + 2.0*k3a + k4a) / 6.0;
+    vec3 d2 = (k1b + 2.0*k2b + 2.0*k3b + k4b) / 6.0;
+    ray = addState(ray, d1, d2, dL);
 
     ray.x = ray.r * sin(ray.theta) * cos(ray.phi);
-    ray.y = ray.r * sin(ray.theta) * sin(ray.phi);
-    ray.z = ray.r * cos(ray.theta);
+    ray.y = ray.r * cos(ray.theta);
+    ray.z = ray.r * sin(ray.theta) * sin(ray.phi);
 }
 bool crossesEquatorialPlane(vec3 oldPos, vec3 newPos) {
     bool crossed = (oldPos.y * newPos.y < 0.0);
