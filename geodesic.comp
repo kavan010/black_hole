@@ -29,7 +29,9 @@ layout(std140, binding = 3) uniform Objects {
 
 const float SagA_rs = 1.269e10;
 const float D_LAMBDA = 1e7;
-const double ESCAPE_R = 1e30;
+// A ray this far out and still moving outwards can no longer reach anything
+// (the farthest objects are at 4e11 m): stop integrating it.
+const float ESCAPE_R = 6e11;
 
 // Globals to store hit info
 vec4 objectColor = vec4(0.0);
@@ -139,14 +141,18 @@ void main() {
 
     for (int i = 0; i < steps; ++i) {
         if (intercept(ray, SagA_rs)) { hitBlackHole = true; break; }
-        rk4Step(ray, D_LAMBDA);
-        lambda += D_LAMBDA;
+        // Keep the fine step near the hole, where the curvature is, and grow it
+        // quadratically with distance once the ray is beyond ~5 r_s.
+        float far = ray.r / (5.0 * SagA_rs);
+        float dL = D_LAMBDA * max(1.0, far * far);
+        rk4Step(ray, dL);
+        lambda += dL;
 
         vec3 newPos = vec3(ray.x, ray.y, ray.z);
         if (crossesEquatorialPlane(prevPos, newPos)) { hitDisk = true; break; }
         if (interceptObject(ray)) { hitObject = true; break; }
         prevPos = newPos;
-        if (ray.r > ESCAPE_R) break;
+        if (ray.r > ESCAPE_R && ray.dr > 0.0) break;
     }
 
     if (hitDisk) {
