@@ -4,6 +4,11 @@ project(BlackHoleSim)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# MSVC reads sources in the system code page by default; the files are UTF-8
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # Dependencies
 find_package(GLEW REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -37,4 +42,11 @@ foreach(shader ${SHADERS})
         $<TARGET_FILE_DIR:BlackHole3D>
     )
 endforeach()
+
+# Visual Studio: make F5 run BlackHole3D from its output directory, where the
+# shaders are copied (the shaders are opened relative to the working directory)
+set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT BlackHole3D)
+set_target_properties(BlackHole3D BlackHole2D PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:BlackHole3D>"
+)
 
