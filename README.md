@@ -32,8 +32,8 @@ Edit: After completion of project -
 
 1. Clone the repository:
 	-  `git clone https://github.com/kavan010/black_hole.git`
-2. CD into the newly cloned directory
-	- `cd ./black_hole` 
+2. CD into the C++ folder (all the C++ code, shaders and `CMakeLists.txt` live there)
+	- `cd ./black_hole/C++` 
 3. Install dependencies with Vcpkg
 	- `vcpkg install`
 4. Get the vcpkg cmake toolchain file path
@@ -60,6 +60,28 @@ sudo apt install build-essential cmake \
 ```
 
 This provides the GLEW, GLFW, GLM and OpenGL development files so `find_package(...)` calls in `CMakeLists.txt` can locate the libraries. After installing, run the `cmake -B build -S .` and `cmake --build build` commands as shown in the Build Instructions.
+
+### Vulkan version (`BlackHoleVK`)
+
+A Vulkan 1.3 port of the 3D simulation (`black_hole_vk.cpp` + the `*_vk.*` shaders). It is built only when CMake finds the Vulkan headers and `glslc`:
+
+```bash
+sudo apt install libvulkan-dev glslc vulkan-validationlayers mesa-vulkan-drivers
+cmake -B build -S . && cmake --build build --target BlackHoleVK
+cd build && ./BlackHoleVK
+```
+
+Or with Docker (no host dependencies besides Docker and a GPU), from the repository root:
+
+```bash
+docker build -t black-hole-vk C++
+docker run --rm -it --network host -e DISPLAY=$DISPLAY \
+  -e XAUTHORITY=/tmp/.xauth -v $XAUTHORITY:/tmp/.xauth:ro -v /tmp/.X11-unix:/tmp/.X11-unix \
+  --device /dev/dri black-hole-vk                     # Intel / AMD
+  # NVIDIA instead of --device: --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all
+```
+
+Details of the port: [`C++/VULKAN_PORT.md`](C++/VULKAN_PORT.md).
 
 ## **How the code works:**
 for 2D: simple, just run 2D_lensing.cpp with the nessesary dependencies installed.
